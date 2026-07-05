@@ -1,0 +1,112 @@
+.hero {
+  position: relative;
+  padding-top: 110px;
+  overflow: hidden;
+  background: var(--bg);
+}
+@media (max-width: 760px) { .hero { padding-top: 70px; } }
+
+.hero__copy {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero__title {
+  font-size: clamp(42px, 7vw, 82px);
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 1.06;
+  color: var(--text);
+}
+
+.hero__lead {
+  margin-top: 28px;
+  font-size: clamp(16px, 1.6vw, 19px);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+@media (max-width: 640px) { .hero__br { display: none; } }
+
+.hero__actions { margin-top: 36px; }
+
+/* ================= stage glow ================= */
+.stage {
+  position: relative;
+  height: 640px;
+  margin-top: -30px;
+  pointer-events: none;
+}
+@media (max-width: 760px) { .stage { height: 420px; } }
+
+.stage__glow {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+}
+/* upper thin arc of light */
+.stage__glow--a {
+  top: 70px;
+  width: 62%;
+  height: 190px;
+  background: radial-gradient(ellipse at 50% 50%, rgba(246, 200, 206, 0.9), rgba(216, 124, 144, 0.4) 46%, transparent 72%);
+  filter: blur(24px);
+}
+/* dark occluder that cuts the top of the arc */
+.stage__occ--a {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: -370px;
+  width: 125%;
+  height: 500px;
+  border-radius: 50%;
+  background: #000;
+  filter: blur(10px);
+}
+/* main broad glow pool — wide and horizontal */
+.stage__glow--b {
+  top: 200px;
+  width: 145%;
+  height: 460px;
+  background: radial-gradient(ellipse at 50% 40%, rgba(245, 186, 194, 0.85), rgba(206, 112, 134, 0.4) 42%, rgba(130, 58, 80, 0.15) 62%, transparent 76%);
+  filter: blur(38px);
+}
+/* dark wings slicing across the pool, forming a V of light */
+.stage__wing {
+  position: absolute;
+  top: 150px;
+  width: 84%;
+  height: 420px;
+  border-radius: 50%;
+  background: #000;
+  filter: blur(16px);
+}
+.stage__wing--l { left: -36%; transform: rotate(14deg); }
+.stage__wing--r { right: -36%; transform: rotate(-14deg); }
+
+/* bright center pool below the wings */
+.stage__floor {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 400px;
+  width: 100%;
+  height: 300px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 40%, rgba(246, 190, 198, 0.65), rgba(190, 100, 122, 0.25) 50%, transparent 72%);
+  filter: blur(40px);
+}
+
+/* fade to black at the bottom + edges */
+.stage__fade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, transparent 62%, rgba(0,0,0,0.85) 92%, #000 100%),
+    linear-gradient(90deg, #000 0%, transparent 12%, transparent 88%, #000 100%);
+}

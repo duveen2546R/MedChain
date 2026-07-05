@@ -1,0 +1,21 @@
+.ticker {
+  overflow: hidden;
+  padding: 22px 0;
+  background: var(--bg);
+}
+.ticker__track {
+  display: flex;
+  width: max-content;
+  animation: ticker-scroll 40s linear infinite;
+}
+.ticker__group { display: flex; }
+.ticker__group span {
+  padding: 0 60px;
+  font-size: 15px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}

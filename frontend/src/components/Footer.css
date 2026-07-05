@@ -1,0 +1,49 @@
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 72px 0 130px; /* extra bottom room for the floating dock */
+  background: var(--bg);
+}
+.footer__inner {
+  display: grid;
+  grid-template-columns: 1.2fr 2fr;
+  gap: 56px;
+}
+@media (max-width: 780px) { .footer__inner { grid-template-columns: 1fr; gap: 40px; } }
+
+.footer__logo {
+  display: inline-block;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin-bottom: 18px;
+}
+.footer__logo em {
+  font-family: "Playfair Display", serif;
+  font-style: italic;
+  color: var(--pink);
+}
+.footer__brand p { color: var(--text-dim); font-size: 15px; line-height: 1.6; max-width: 300px; }
+.footer__pill {
+  display: inline-flex; align-items: center; gap: 9px;
+  margin-top: 20px; font-size: 13px; color: var(--text-dim);
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 100px;
+}
+.footer__pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pink); }
+
+.footer__cols { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 28px; }
+@media (max-width: 620px) { .footer__cols { grid-template-columns: 1fr 1fr; } .footer__refs { grid-column: span 2; } }
+.footer__cols h5 {
+  font-size: 13px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-faint); margin: 0 0 18px;
+}
+.footer__cols a, .footer__cols span {
+  display: block; font-size: 14.5px; color: var(--text-dim); margin-bottom: 12px;
+  transition: color .2s ease;
+}
+.footer__cols a:hover { color: var(--pink); }
+.footer__refs span { font-size: 13px; color: var(--text-faint); }
+
+.footer__bottom {
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  margin-top: 56px; padding-top: 26px; border-top: 1px solid var(--border);
+  font-size: 13px; color: var(--text-faint);
+}
