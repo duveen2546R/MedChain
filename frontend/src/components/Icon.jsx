@@ -59,6 +59,37 @@ const paths = {
   ),
   check: <path d="m5 12 4.5 4.5L19 7" />,
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
+  search: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m20 20-3.8-3.8" />
+    </>
+  ),
+  bell: (
+    <>
+      <path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6" />
+      <path d="M10 20a2.2 2.2 0 0 0 4 0" />
+    </>
+  ),
+  pulse: <path d="M3 12h4.5l2.5-7 4 14 2.5-7H21" />,
+  layers: (
+    <>
+      <path d="m12 3 9 5-9 5-9-5Z" />
+      <path d="m3 13 9 5 9-5" />
+    </>
+  ),
+  inbox: (
+    <>
+      <path d="M3 13h5l2 3h4l2-3h5" />
+      <path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+    </>
+  ),
+  logout: (
+    <>
+      <path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3" />
+      <path d="m15 16 4-4-4-4m4 4H9" />
+    </>
+  ),
   spark: (
     <>
       <path d="M12 3v4m0 10v4m9-9h-4M7 12H3" />

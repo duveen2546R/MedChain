@@ -1,6 +1,6 @@
 import "./Ticker.css";
 
-const phrase = "Backend-coordinated federated model updates";
+const phrase = "Privacy-first federated learning for healthcare";
 
 export default function Ticker() {
   return (

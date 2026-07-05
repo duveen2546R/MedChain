@@ -18,15 +18,15 @@ export default function Hero() {
     <section className="hero">
       <div className="container hero__copy">
         <motion.h1 className="hero__title" custom={0} variants={fadeUp} initial="hidden" animate="show">
-          Coordinate Real Federated
+          Collaborative Medical AI
           <br />
-          Model Updates
+          Without Sharing Patient Data
         </motion.h1>
 
         <motion.p className="hero__lead" custom={1} variants={fadeUp} initial="hidden" animate="show">
-          An authenticated backend service designed for{" "}
+          MedChain lets hospitals, clinics, and researchers improve one shared model{" "}
           <br className="hero__br" />
-          hospital clients, administrators, and researchers.
+          together — while every patient record stays inside its own institution.
         </motion.p>
 
         <motion.div className="hero__actions" custom={2} variants={fadeUp} initial="hidden" animate="show">

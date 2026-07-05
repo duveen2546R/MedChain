@@ -9,13 +9,13 @@ export function Intro() {
     <section className="section intro" id="about">
       <div className="container intro__grid">
         <Reveal>
-          <span className="eyebrow"><span className="dot" /> Backend-coordinated federation</span>
+          <span className="eyebrow"><span className="dot" /> Privacy-first by design</span>
         </Reveal>
         <Reveal delay={0.08}>
           <p className="intro__text">
-            MedChain is an authenticated backend service for coordinating model-update rounds.
-            Hospitals submit trained weights and metrics through the API; the service validates,
-            stores, and aggregates those submissions while rejecting patient-record fields.
+            MedChain is a platform for <em>collaborative medical AI</em>. Hospitals train on
+            their own data and share only model updates — never patient records. Every
+            contribution is validated, aggregated, and written to a tamper-evident audit trail.
           </p>
         </Reveal>
       </div>
@@ -23,15 +23,22 @@ export function Intro() {
   );
 }
 
-const tech = ["FastAPI", "MongoDB Atlas", "Azure Blob Storage", "Python", "React", "Vite"];
+const trustSignals = [
+  "Privacy-first",
+  "Federated by design",
+  "On-chain audit trail",
+  "Role-based access",
+  "Encrypted in transit",
+  "No raw data egress",
+];
 
 export function TechMarquee() {
   return (
-    <div className="techrow" aria-label="Implemented technologies">
+    <div className="techrow" aria-label="Platform principles">
       <div className="techrow__track">
         {[0, 1].map((group) => (
           <div className="techrow__group" key={group}>
-            {tech.map((item) => <span key={item}>{item}</span>)}
+            {trustSignals.map((item) => <span key={item}>{item}</span>)}
           </div>
         ))}
       </div>
@@ -42,21 +49,21 @@ export function TechMarquee() {
 const benefits = [
   {
     no: "01",
-    title: "Persistent Round Orchestration",
-    body: "Training objectives, hospital selection, rounds, submissions, model versions, and audit events are persisted in MongoDB.",
-    foot: "No browser-side state or offline simulation.",
+    title: "Patient data stays put",
+    body: "Hospitals train locally and share only encrypted model updates. Raw records never leave your institution's network.",
+    foot: "Privacy by architecture, not by policy.",
   },
   {
     no: "02",
-    title: "Authenticated Submissions",
-    body: "Hospital users submit model weights only for their own organization and only when selected for an active round.",
-    foot: "Authorization is enforced by the API.",
+    title: "Every contribution is verifiable",
+    body: "Each validated update is fingerprinted and written to an immutable on-chain ledger, giving partners and regulators a tamper-evident audit trail.",
+    foot: "Provenance you can prove.",
   },
   {
     no: "03",
-    title: "Deterministic Aggregation",
-    body: "The backend checks update schemas and client metrics, then performs sample-weighted federated averaging after all selected hospitals respond.",
-    foot: "Accuracy is labeled as a client-reported metric.",
+    title: "Stronger models, together",
+    body: "Sample-weighted federated averaging combines insight from every participating hospital into one continually improving shared model.",
+    foot: "Greater than any single dataset.",
   },
 ];
 
@@ -66,7 +73,7 @@ export function Benefits() {
       <div className="container">
         <div className="sec-center">
           <Reveal><span className="eyebrow"><span className="dot" /> Implemented service</span></Reveal>
-          <Reveal delay={0.06}><h2 className="section-title">What the backend actually does</h2></Reveal>
+          <Reveal delay={0.06}><h2 className="section-title">Built for trust at every step</h2></Reveal>
         </div>
         <motion.div className="grid benefits" variants={stagger} initial="hidden" whileInView="show" viewport={{ once: true, margin: "-70px" }}>
           {benefits.map((benefit) => (
@@ -141,21 +148,21 @@ function MiniBars() {
 
 const highlights = [
   {
-    tag: "Hospital clients",
-    title: "Updates arrive through the API",
-    body: "The backend never invents training results. A selected hospital must submit its own weight vector and measured local metrics.",
+    tag: "For hospitals",
+    title: "Contribute without exposing data",
+    body: "Participating hospitals submit trained weights and local metrics through a secure API. Your patient data is never transmitted, stored centrally, or reconstructed.",
     visual: <MiniNetwork />,
   },
   {
-    tag: "Persistent state",
-    title: "MongoDB is required",
-    body: "The service fails startup when MongoDB is not configured or reachable. It has no in-memory production fallback.",
+    tag: "For administrators",
+    title: "Full control and oversight",
+    body: "Role-based access governs who can launch rounds, verify submissions, and manage the consortium — and every action is authenticated and logged.",
     visual: <MiniStore />,
   },
   {
-    tag: "Federated averaging",
-    title: "Weights are aggregated server-side",
-    body: "Verified updates are combined in proportion to each submitted sample count. The resulting artifact is stored privately in Azure Blob Storage and referenced by its content hash.",
+    tag: "For researchers",
+    title: "Results you can trust",
+    body: "Approved model versions and audit metadata are available for review, backed by a verifiable on-chain record of exactly how each version was produced.",
     visual: <MiniBars />,
   },
 ];
@@ -189,9 +196,9 @@ export function FinalCTA() {
     <section className="section cta">
       <div className="cta__glow" aria-hidden />
       <div className="container sec-center cta__inner">
-        <Reveal><h2 className="cta__title">Connect to the backend service</h2></Reveal>
+        <Reveal><h2 className="cta__title">Bring your institution into the network</h2></Reveal>
         <Reveal delay={0.08}>
-          <p className="cta__lead">Create objectives, coordinate hospitals, and receive real model updates.</p>
+          <p className="cta__lead">Improve medical AI together — with privacy, provenance, and control built in.</p>
         </Reveal>
         <Reveal delay={0.14}>
           <Link to={isAuthenticated ? "/dashboard" : "/register"} className="btn btn-primary">

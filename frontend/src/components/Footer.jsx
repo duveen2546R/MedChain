@@ -16,7 +16,7 @@ export default function Footer() {
             MedChain <em>AI</em>
           </span>
           <p>
-            A persistent backend coordinator for authenticated federated model updates.
+            Privacy-first infrastructure for collaborative medical AI — train together, share nothing but progress.
           </p>
           <span className="footer__pill"><span className="dot" /> Team MedChain AI</span>
         </div>
@@ -38,7 +38,7 @@ export default function Footer() {
 
       <div className="container footer__bottom">
         <span>© {new Date().getFullYear()} MedChain AI</span>
-        <span>Backend-backed service</span>
+        <span>Built for healthcare · Privacy by design</span>
       </div>
     </footer>
   );
