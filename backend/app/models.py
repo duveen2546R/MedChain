@@ -64,6 +64,10 @@ class Hospital(APIModel):
     contribution: float = 0
     active: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+    wallet_address: str | None = None
+    blockchain_registered: bool = False
+    registry_tx_hash: str | None = None
+    reputation_tx_hash: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -110,6 +114,8 @@ class Submission(APIModel):
     status: SubmissionStatus = "submitted"
     metrics: dict[str, float] = Field(default_factory=dict)
     validation_report_id: str | None = None
+    blockchain_tx_hash: str | None = None
+    blockchain_block_number: int | None = None
     submitted_at: datetime = Field(default_factory=utcnow)
 
 
@@ -158,8 +164,14 @@ class DashboardSummary(APIModel):
     hospitals: list[Hospital]
     versions: list[ModelVersion]
     round: int
+    currentRoundId: str | None = None
+    currentRoundStatus: RoundStatus | None = None
     running: bool
     phase: str
     activeNode: str | None = None
     submissionsReceived: int = 0
     submissionsRequired: int = 0
+    blockchainTransactions: int = 0
+    blockchainChainId: int | None = None
+    blockchainConnected: bool = False
+    blockchainSigner: str | None = None

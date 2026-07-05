@@ -5,7 +5,11 @@ from ..models import Hospital, TrainingObjective
 
 class RoutingService:
     def select_hospitals(self, objective: TrainingObjective, hospitals: list[Hospital]) -> list[Hospital]:
-        active = [hospital for hospital in hospitals if hospital.active]
+        active = [
+            hospital
+            for hospital in hospitals
+            if hospital.active and hospital.blockchain_registered and hospital.wallet_address
+        ]
         scored = sorted(
             active,
             key=lambda hospital: self._score(objective, hospital),

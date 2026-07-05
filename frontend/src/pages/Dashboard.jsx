@@ -19,6 +19,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const role = user?.role;
   const mayRun = canRunRounds(role);
+  const mayManageChain = role === "platform_admin";
   const latest = service.versions[service.versions.length - 1];
   const first = service.versions[0];
 
@@ -72,10 +73,10 @@ export default function Dashboard() {
               <button
                 className="btn btn-primary"
                 onClick={service.runRound}
-                disabled={service.running || !mayRun || !service.backendConnected}
+                disabled={service.running || !mayRun || !service.backendConnected || Boolean(service.pendingAction)}
                 title={mayRun ? "Start a training round" : "Requires a Hospital Admin or Platform Admin role"}
               >
-                {service.running ? "Round active" : "Start Round"}
+                {service.pendingAction === "round:create" ? "Starting" : service.running ? "Round active" : "Start Round"}
                 {!service.running && <Icon name="arrow" size={16} />}
               </button>
             </div>
@@ -107,9 +108,9 @@ export default function Dashboard() {
             <span className="kpi__sub">hospital updates received by API</span>
           </div>
           <div className="card kpi">
-            <span className="kpi__label">Backend</span>
-            <b className="kpi__value">{service.backendConnected ? "Online" : "Offline"}</b>
-            <span className="kpi__sub">MongoDB-backed service</span>
+            <span className="kpi__label">On-chain records</span>
+            <b className="kpi__value">{service.blockchainTransactions}</b>
+            <span className="kpi__sub">EVM chain {service.blockchainChainId || "—"}</span>
           </div>
         </section>
 
@@ -138,6 +139,28 @@ export default function Dashboard() {
                         <span>{h.specialty} · {h.region} · {h.samples.toLocaleString()} samples</span>
                       </div>
                       <span className={`node__status ${m.cls}`}>{m.label}</span>
+                    </div>
+                    <div className="node__chain">
+                      <span className={`node__chain-state ${h.blockchain_registered ? "is-registered" : "is-pending"}`}>
+                        <Icon name="chain" size={14} />
+                        {h.blockchain_registered ? "Registered on-chain" : "Pending chain registration"}
+                      </span>
+                      {h.wallet_address && (
+                        <span className="node__wallet" title={h.wallet_address}>
+                          {h.wallet_address.slice(0, 8)}...{h.wallet_address.slice(-6)}
+                        </span>
+                      )}
+                      {mayManageChain && h.wallet_address && !h.blockchain_registered && (
+                        <button
+                          className="node__chain-btn"
+                          onClick={() => service.registerHospitalOnChain(h.id)}
+                          disabled={!service.backendConnected || Boolean(service.pendingAction)}
+                          title="Register this hospital wallet in the consortium registry"
+                        >
+                          <Icon name="chain" size={14} />
+                          {service.pendingAction === `hospital:${h.id}:register` ? "Registering" : "Register"}
+                        </button>
+                      )}
                     </div>
                     <div className="node__bars">
                       <div className="node__rep">
@@ -168,6 +191,21 @@ export default function Dashboard() {
                 <p>
                   The backend has received {service.submissionsReceived} of {service.submissionsRequired} required updates.
                 </p>
+                <p>{service.blockchainTransactions} contributions have confirmed blockchain receipts.</p>
+                <p>
+                  Chain {service.blockchainChainId || "—"} is {service.blockchainConnected ? "connected" : "not connected"}.
+                </p>
+                {mayManageChain && service.currentRoundStatus === "failed" && service.currentRoundId && (
+                  <button
+                    className="round-status__btn"
+                    onClick={service.retryRoundBlockchain}
+                    disabled={!service.backendConnected || Boolean(service.pendingAction)}
+                    title="Retry confirmed blockchain recording for the current round"
+                  >
+                    <Icon name="chain" size={15} />
+                    {service.pendingAction === `round:${service.currentRoundId}:retry-chain` ? "Retrying" : "Retry chain recording"}
+                  </button>
+                )}
               </div>
             </div>
           </section>
@@ -240,8 +278,8 @@ export default function Dashboard() {
 
         <p className="dash__foot">
           Every value on this dashboard comes from the authenticated FastAPI service. Hospital clients
-          submit model updates through the API; the backend validates their schema, persists them, and
-          performs sample-weighted aggregation. There is no offline simulation.
+          submit model updates through the API; the backend validates and aggregates them, stores artifacts
+          in Azure, and records confirmed contribution hashes on the configured EVM chain.
         </p>
       </div>
     </main>

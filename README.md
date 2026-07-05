@@ -18,6 +18,7 @@ transactions.
 - Model schema, dimension, metric, and sample-count validation.
 - Sample-weighted federated averaging based only on hospital-submitted updates.
 - Mandatory Azure Blob Storage for model updates and aggregated model artifacts.
+- Confirmed EVM transactions for hospital registration, contribution hashes, and reputation updates.
 - Authenticated dashboard polling real backend state.
 
 ## MongoDB Atlas setup
@@ -40,6 +41,22 @@ Percent-encode special characters in the username or password. Do not place the 
 
 When `AZURE_STORAGE_CONNECTION_STRING` is present it takes precedence over Managed Identity.
 The backend validates container access during startup and does not fall back to local disk.
+
+## Blockchain setup
+
+Use an EVM RPC provider and a dedicated funded wallet. Add the RPC URL, chain ID, and private key
+to `backend/.env`, deploy the contracts, then copy the printed addresses back into the environment:
+
+```bash
+cd contracts
+npm install
+npm test
+npm run deploy -- --network configured
+```
+
+The deployment wallet remains owner of all three contracts because the backend uses it to register
+hospital wallets and sign `TrainingLedger.recordContribution` transactions. For production, place
+the private key in the hosting platform's secret manager rather than a checked-in file.
 
 ## Application setup
 
@@ -74,11 +91,11 @@ The frontend reads `frontend/.env` and expects the API at `VITE_MEDCHAIN_API_URL
 
 ## Real update workflow
 
-1. A platform administrator creates hospital records and a training objective.
+1. A platform administrator creates hospital records with wallet addresses and registers those wallets on-chain.
 2. An authorized administrator creates a round with `POST /rounds`.
 3. The backend selects active hospitals and waits for their clients.
 4. Each selected hospital submits its actual update to `POST /rounds/{round_id}/submissions`.
-5. After every selected hospital responds, the backend aggregates verified updates and creates a model version.
+5. After every selected hospital responds, the backend aggregates verified updates, records every contribution on-chain, and creates a model version.
 
 Submission body:
 
@@ -105,7 +122,7 @@ it is not presented as an independently evaluated global accuracy.
 ```text
 frontend/        React/Vite API client
 backend/         FastAPI service, MongoDB repository, services, and tests
-contracts/       Standalone Solidity contracts; not connected to the FastAPI runtime
+contracts/       Solidity contracts, tests, and deployment script used by FastAPI
 ```
 
 Local `.env` files are ignored. Committed `.env.example` files document required configuration.

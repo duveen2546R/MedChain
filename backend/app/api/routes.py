@@ -65,6 +65,7 @@ class HospitalCreate(BaseModel):
     specialty: str
     reputation: int = Field(default=80, ge=0, le=100)
     org_id: str | None = None
+    wallet_address: str = Field(pattern=r"^0x[0-9a-fA-F]{40}$")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -75,6 +76,7 @@ class HospitalPatch(BaseModel):
     specialty: str | None = None
     reputation: int | None = Field(default=None, ge=0, le=100)
     active: bool | None = None
+    wallet_address: str | None = Field(default=None, pattern=r"^0x[0-9a-fA-F]{40}$")
     metadata: dict[str, Any] | None = None
 
 
@@ -118,6 +120,9 @@ async def health(request: Request) -> dict[str, Any]:
         "mongodb_connected": repo.mongo_enabled(),
         "artifact_storage": "azure_blob",
         "azure_blob_connected": request.app.state.runtime.artifacts.connected,
+        "blockchain_connected": request.app.state.runtime.blockchain.connected,
+        "blockchain_chain_id": request.app.state.runtime.blockchain.chain_id,
+        "blockchain_signer": request.app.state.runtime.blockchain.signer_address,
     }
 
 
@@ -231,6 +236,7 @@ async def create_hospital(
         samples=body.samples,
         specialty=body.specialty,
         reputation=body.reputation,
+        wallet_address=body.wallet_address,
         metadata=body.metadata,
     )
     saved = await repo.put("hospitals", hospital)
@@ -252,11 +258,29 @@ async def patch_hospital(
     if user.role == "hospital_admin" and user.org_id != hospital.org_id:
         raise HTTPException(status_code=403, detail="Hospital administrators may only edit their own organization")
     patch = body.model_dump(exclude_unset=True)
+    if "wallet_address" in patch and patch["wallet_address"] != hospital.wallet_address:
+        hospital.blockchain_registered = False
+        hospital.registry_tx_hash = None
+        hospital.reputation_tx_hash = None
     for key, value in patch.items():
         setattr(hospital, key, value)
     saved = await repo.put("hospitals", hospital)
     await request.app.state.runtime.audit.record("hospital.updated", "hospital", saved.id, user)
     return saved
+
+
+@router.post("/hospitals/{hospital_id}/blockchain/register", response_model=Hospital)
+async def register_hospital_on_chain(
+    hospital_id: str,
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("platform_admin")),
+) -> Hospital:
+    try:
+        return await runtime.register_hospital_on_chain(hospital_id, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/training-objectives", response_model=list[TrainingObjective])
@@ -312,6 +336,20 @@ async def create_round(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/rounds/{round_id}/blockchain/retry", response_model=TrainingRound)
+async def retry_round_blockchain(
+    round_id: str,
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("platform_admin")),
+) -> TrainingRound:
+    try:
+        return await runtime.retry_round_blockchain(round_id, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post(
     "/rounds/{round_id}/submissions",
     response_model=Submission,
@@ -350,6 +388,23 @@ async def current_model(
         return await runtime.current_model()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/blockchain/contributions")
+async def blockchain_contributions(
+    repo: Repository = Depends(get_repo),
+    user: User = Depends(require_roles("platform_admin", "auditor", "research_partner")),
+) -> list[dict[str, Any]]:
+    _ = user
+    submissions = await repo.list("submissions", Submission)
+    results: list[dict[str, Any]] = []
+    for submission in submissions:
+        if not submission.blockchain_tx_hash:
+            continue
+        payload = dump(submission)
+        payload.pop("weights", None)
+        results.append(payload)
+    return sorted(results, key=lambda item: item["submitted_at"])
 
 
 @router.get("/audit/events", response_model=list[AuditEvent])

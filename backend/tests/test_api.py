@@ -8,7 +8,7 @@ from backend.app.config import Settings
 from backend.app.main import create_app
 from backend.app.models import Hospital, Organization, TrainingObjective, User
 from backend.app.security import hash_password
-from backend.tests.fakes import MemoryArtifactStore, MemoryRepository
+from backend.tests.fakes import MemoryArtifactStore, MemoryBlockchainService, MemoryRepository
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-thirty-two-characters"
 TEST_PASSWORD = "test-password-123"
@@ -43,9 +43,9 @@ async def seed_test_records(repo: MemoryRepository, settings: Settings) -> None:
     )
 
     hospitals = [
-        Hospital(id="h1", org_id="org_h1", name="Hospital One", region="North", samples=1000, specialty="Radiology"),
-        Hospital(id="h2", org_id="org_h2", name="Hospital Two", region="South", samples=2000, specialty="Radiology"),
-        Hospital(id="h3", org_id="org_h3", name="Hospital Three", region="West", samples=1500, specialty="Cardiology"),
+        Hospital(id="h1", org_id="org_h1", name="Hospital One", region="North", samples=1000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000001", blockchain_registered=True),
+        Hospital(id="h2", org_id="org_h2", name="Hospital Two", region="South", samples=2000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000002", blockchain_registered=True),
+        Hospital(id="h3", org_id="org_h3", name="Hospital Three", region="West", samples=1500, specialty="Cardiology", wallet_address="0x0000000000000000000000000000000000000003", blockchain_registered=False),
     ]
     for hospital in hospitals:
         await repo.put(
@@ -86,6 +86,7 @@ def client() -> TestClient:
             settings,
             repository=repo,
             artifact_store=MemoryArtifactStore(),
+            blockchain_service=MemoryBlockchainService(),
         )
     )
 
@@ -179,6 +180,12 @@ def test_round_aggregates_only_submitted_hospital_updates() -> None:
         assert model.json()["accuracy"] == 86.67
         assert model.json()["contributors"] == 2
         assert model.json()["metric_source"] == "weighted_client_report"
+        contributions = test_client.get(
+            "/blockchain/contributions", headers=auth(admin_token)
+        )
+        assert contributions.status_code == 200
+        assert len(contributions.json()) == 2
+        assert all(item["blockchain_tx_hash"] for item in contributions.json())
 
 
 def test_submission_rejects_raw_patient_data() -> None:
@@ -208,6 +215,20 @@ def test_hospital_cannot_submit_for_another_organization() -> None:
             headers=auth(node_token),
         )
         assert response.status_code == 403
+
+
+def test_platform_admin_registers_hospital_wallet_on_chain() -> None:
+    with client() as test_client:
+        token = login(test_client)
+        response = test_client.post(
+            "/hospitals/h3/blockchain/register",
+            headers=auth(token),
+        )
+        assert response.status_code == 200
+        hospital = response.json()
+        assert hospital["blockchain_registered"] is True
+        assert hospital["registry_tx_hash"].startswith("0x")
+        assert hospital["reputation_tx_hash"].startswith("0x")
 
 
 def test_removed_fabricated_endpoints_are_not_exposed() -> None:

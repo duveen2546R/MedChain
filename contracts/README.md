@@ -16,6 +16,16 @@ npm install
 npm test
 ```
 
-These contracts are standalone and are not connected to the FastAPI runtime. The backend does not
-claim on-chain persistence or fabricate transaction hashes. Integrating a deployed contract would
-require a separate, explicit transaction adapter and deployment configuration.
+## Deploy
+
+Set the EVM values in `backend/.env`, then deploy with the backend's dedicated signer wallet:
+
+```bash
+npm install
+npm test
+npm run deploy -- --network configured
+```
+
+Copy the printed registry, reputation, and ledger addresses into `backend/.env`. The FastAPI runtime
+validates the chain ID, deployed bytecode, contract ownership, and registry wiring at startup. It
+then uses Web3.py to register hospital wallets and submit confirmed contribution transactions.

@@ -10,6 +10,7 @@ from .bootstrap import bootstrap_admin
 from .config import Settings, settings
 from .services.runtime import MedChainRuntime
 from .services.artifacts import ArtifactStore
+from .services.blockchain import BlockchainService
 from .store import Repository
 
 
@@ -17,17 +18,20 @@ def create_app(
     app_settings: Settings = settings,
     repository: Repository | None = None,
     artifact_store: ArtifactStore | None = None,
+    blockchain_service: BlockchainService | None = None,
 ) -> FastAPI:
     owns_repository = repository is None
     owns_artifact_store = artifact_store is None
+    owns_blockchain_service = blockchain_service is None
     repo = repository or Repository(app_settings)
-    runtime = MedChainRuntime(repo, app_settings, artifact_store)
+    runtime = MedChainRuntime(repo, app_settings, artifact_store, blockchain_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app_settings.validate(
             require_mongodb=owns_repository,
             require_azure_storage=owns_artifact_store,
+            require_blockchain=owns_blockchain_service,
         )
         await repo.connect()
         try:

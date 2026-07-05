@@ -7,6 +7,7 @@ FastAPI service for coordinating externally trained federated model updates.
 - Python 3.11+
 - MongoDB Atlas
 - A private Azure Blob Storage container
+- An EVM JSON-RPC endpoint and a funded deployment wallet
 - A unique `MEDCHAIN_SECRET_KEY` with at least 32 characters
 
 The service fails startup when required configuration is missing, MongoDB cannot be reached, or
@@ -34,6 +35,21 @@ AZURE_STORAGE_CONNECTION_STRING=
 Managed Identity requires the **Storage Blob Data Contributor** role. Locally,
 `DefaultAzureCredential` can use an `az login` session when no connection string is supplied.
 
+Deploy the contracts using the same dedicated wallet that the backend will use to sign ledger
+transactions:
+
+```bash
+cd contracts
+npm install
+npm test
+npm run deploy -- --network configured
+```
+
+Before deployment, set `MEDCHAIN_EVM_RPC_URL`, `MEDCHAIN_EVM_CHAIN_ID`, and
+`MEDCHAIN_EVM_SIGNER_PRIVATE_KEY` in `backend/.env`. Copy the three deployed contract addresses
+printed by the deployment script into the matching `MEDCHAIN_*_ADDRESS` values. Never use a wallet
+that holds production treasury funds.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -58,12 +74,20 @@ Remove the bootstrap password from the deployment environment after the account 
 - `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /me`
 - `GET /dashboard/summary`
 - `GET/POST/PATCH /hospitals`
+- `POST /hospitals/{id}/blockchain/register`
 - `GET/POST /training-objectives`
 - `GET/POST /rounds`, `GET /rounds/{id}`
 - `POST /rounds/{id}/submissions`
+- `POST /rounds/{id}/blockchain/retry`
 - `GET /model-versions`, `GET /model-versions/current`
+- `GET /blockchain/contributions`
 - `GET /audit/events`, `GET /compliance/exports`
 
 The update endpoint accepts model weights and numeric metrics. It rejects payload keys associated
 with raw patient records. Actual hospital training and global model serving are deliberately outside
 the backend rather than being simulated.
+
+Every hospital needs a unique EVM `wallet_address`. A platform administrator must call the
+blockchain registration endpoint before the hospital is eligible for routing. When a round closes,
+the backend signs `TrainingLedger.recordContribution(...)` for every verified or rejected update,
+waits for a successful receipt, and stores the transaction hash and block number in MongoDB Atlas.

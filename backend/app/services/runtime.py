@@ -25,6 +25,7 @@ from ..store import Repository
 from .aggregation import FedAvgAggregator
 from .artifacts import ArtifactStore
 from .audit import AuditService
+from .blockchain import BlockchainService
 from .routing import RoutingService
 from .validation import ModelUpdateValidator
 
@@ -37,11 +38,13 @@ class MedChainRuntime:
         repo: Repository,
         settings: Settings,
         artifact_store: ArtifactStore | None = None,
+        blockchain_service: BlockchainService | None = None,
     ):
         self.repo = repo
         self.settings = settings
         self.audit = AuditService(repo)
         self.artifacts = artifact_store or ArtifactStore(settings)
+        self.blockchain = blockchain_service or BlockchainService(settings)
         self.routing = RoutingService()
         self.validator = ModelUpdateValidator()
         self.aggregator = FedAvgAggregator()
@@ -49,9 +52,39 @@ class MedChainRuntime:
 
     async def connect(self) -> None:
         await self.artifacts.connect()
+        await self.blockchain.connect()
 
     async def close(self) -> None:
+        await self.blockchain.close()
         await self.artifacts.close()
+
+    async def register_hospital_on_chain(self, hospital_id: str, actor: User) -> Hospital:
+        hospital = await self.repo.get("hospitals", hospital_id, Hospital)
+        if hospital is None:
+            raise ValueError("Hospital not found")
+        if not hospital.wallet_address:
+            raise ValueError("Hospital wallet_address is required")
+        receipt = await self.blockchain.register_hospital(
+            hospital.wallet_address,
+            hospital.org_id,
+            hospital.reputation,
+        )
+        hospital.blockchain_registered = True
+        hospital.registry_tx_hash = receipt.registry_tx_hash or hospital.registry_tx_hash
+        hospital.reputation_tx_hash = receipt.reputation_tx_hash or hospital.reputation_tx_hash
+        await self.repo.put("hospitals", hospital)
+        await self.audit.record(
+            "hospital.blockchain.registered",
+            "hospital",
+            hospital.id,
+            actor,
+            {
+                "wallet_address": hospital.wallet_address,
+                "registry_tx_hash": receipt.registry_tx_hash,
+                "reputation_tx_hash": receipt.reputation_tx_hash,
+            },
+        )
+        return hospital
 
     async def dashboard_summary(self) -> DashboardSummary:
         hospitals = sorted(await self.repo.list("hospitals", Hospital), key=lambda item: item.id)
@@ -63,16 +96,25 @@ class MedChainRuntime:
             if current_round
             else []
         )
+        all_submissions = await self.repo.list("submissions", Submission)
         running = current_round.status not in {"completed", "failed"} if current_round else False
         return DashboardSummary(
             hospitals=hospitals,
             versions=versions,
             round=current_round.round_number if current_round else 0,
+            currentRoundId=current_round.id if current_round else None,
+            currentRoundStatus=current_round.status if current_round else None,
             running=running,
             phase=current_round.phase if current_round else "No training round has been created",
             activeNode=current_round.active_node if current_round else None,
             submissionsReceived=len(submissions),
             submissionsRequired=len(current_round.selected_hospital_ids) if current_round else 0,
+            blockchainTransactions=sum(
+                1 for submission in all_submissions if submission.blockchain_tx_hash
+            ),
+            blockchainChainId=self.blockchain.chain_id,
+            blockchainConnected=self.blockchain.connected,
+            blockchainSigner=self.blockchain.signer_address,
         )
 
     async def create_objective(self, objective: TrainingObjective, actor: User) -> TrainingObjective:
@@ -205,8 +247,33 @@ class MedChainRuntime:
             )
 
             if len(submissions) == len(training_round.selected_hospital_ids):
-                await self._aggregate_round(training_round, submissions)
+                try:
+                    await self._aggregate_round(training_round, submissions)
+                except RuntimeError as exc:
+                    training_round.status = "failed"
+                    training_round.active_node = None
+                    training_round.phase = (
+                        f"Round {training_round.round_number} blockchain recording failed: {exc}"
+                    )
+                    await self.repo.put("rounds", training_round)
+                    await self.audit.record(
+                        "round.blockchain.failed",
+                        "round",
+                        training_round.id,
+                        metadata={"error": str(exc)},
+                    )
             return submission
+
+    async def retry_round_blockchain(self, round_id: str, actor: User) -> TrainingRound:
+        training_round = await self.repo.get("rounds", round_id, TrainingRound)
+        if training_round is None:
+            raise ValueError("Training round not found")
+        submissions = await self.repo.list("submissions", Submission, round_id=round_id)
+        if len(submissions) != len(training_round.selected_hospital_ids):
+            raise ValueError("The round has not received every selected hospital update")
+        await self._aggregate_round(training_round, submissions)
+        await self.audit.record("round.blockchain.retried", "round", round_id, actor)
+        return training_round
 
     async def current_model(self) -> ModelVersion:
         versions = sorted(await self.repo.list("model_versions", ModelVersion), key=lambda item: item.round)
@@ -233,6 +300,7 @@ class MedChainRuntime:
     ) -> None:
         verified = [submission for submission in submissions if submission.status == "verified"]
         if not verified:
+            await self._record_submissions_on_chain(training_round, submissions, "no-model")
             training_round.status = "failed"
             training_round.active_node = None
             training_round.phase = f"Round {training_round.round_number} failed: no valid model updates"
@@ -266,10 +334,19 @@ class MedChainRuntime:
                 "metric_source": "weighted_client_report",
             },
         )
-        model = await self.repo.put(
+        model_version = f"v{training_round.round_number}"
+        await self._record_submissions_on_chain(
+            training_round,
+            submissions,
+            model_version,
+        )
+        existing_model = await self.repo.find_one(
+            "model_versions", ModelVersion, round=training_round.round_number
+        )
+        model = existing_model or await self.repo.put(
             "model_versions",
             ModelVersion(
-                version=f"v{training_round.round_number}",
+                version=model_version,
                 round=training_round.round_number,
                 accuracy=reported_accuracy,
                 contributors=len(verified),
@@ -296,6 +373,41 @@ class MedChainRuntime:
             f"{len(verified)} verified client updates"
         )
         await self.repo.put("rounds", training_round)
+
+    async def _record_submissions_on_chain(
+        self,
+        training_round: TrainingRound,
+        submissions: list[Submission],
+        model_version: str,
+    ) -> None:
+        for submission in submissions:
+            if submission.blockchain_tx_hash:
+                continue
+            hospital = await self.repo.get("hospitals", submission.hospital_id, Hospital)
+            if hospital is None or not hospital.wallet_address or not hospital.blockchain_registered:
+                raise RuntimeError(
+                    f"Hospital {submission.hospital_id} is not registered on-chain"
+                )
+            receipt = await self.blockchain.record_contribution(
+                round_id=training_round.id,
+                model_version=model_version,
+                contributor=hospital.wallet_address,
+                update_hash=submission.update_hash,
+                artifact_uri=submission.artifact_uri,
+                validated=submission.status == "verified",
+            )
+            submission.blockchain_tx_hash = receipt.tx_hash
+            submission.blockchain_block_number = receipt.block_number
+            await self.repo.put("submissions", submission)
+            await self.audit.record(
+                "round.submission.recorded_on_chain",
+                "submission",
+                submission.id,
+                metadata={
+                    "tx_hash": receipt.tx_hash,
+                    "block_number": receipt.block_number,
+                },
+            )
 
     @staticmethod
     def _dump(model: Any) -> dict[str, Any]:

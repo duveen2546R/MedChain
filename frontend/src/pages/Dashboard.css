@@ -90,6 +90,39 @@
 .s-validated { color: #7ce8b5; background: rgba(124,232,181,0.08); border: 1px solid rgba(124,232,181,0.28); }
 .s-rejected { color: #ff7a90; background: rgba(255,122,144,0.08); border: 1px solid rgba(255,122,144,0.28); }
 
+.node__chain {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px; min-height: 30px;
+}
+.node__chain-state {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 28px; padding: 5px 9px; border-radius: 8px;
+  font-size: 12px; color: var(--text-faint);
+  border: 1px solid var(--border); background: rgba(255,255,255,0.035);
+}
+.node__chain-state.is-registered {
+  color: #7ce8b5; border-color: rgba(124,232,181,0.26); background: rgba(124,232,181,0.07);
+}
+.node__chain-state.is-pending {
+  color: #ffd479; border-color: rgba(255,212,121,0.26); background: rgba(255,212,121,0.07);
+}
+.node__wallet {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px; color: var(--text-faint);
+}
+.node__chain-btn,
+.round-status__btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 30px; padding: 6px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+  color: #000; background: #fff; border: 1px solid #fff;
+  transition: opacity .2s ease, transform .18s ease;
+}
+.node__chain-btn:hover,
+.round-status__btn:hover { transform: translateY(-1px); opacity: 0.88; }
+.node__chain-btn:disabled,
+.round-status__btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
 .node__bars { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
 .node__rep { display: flex; align-items: center; gap: 10px; flex: 1; font-size: 12px; color: var(--text-faint); }
 .node__rep .bar { flex: 1; height: 5px; border-radius: 100px; background: #1c1c1c; overflow: hidden; }
@@ -102,6 +135,8 @@
 .round-status__content { text-align: center; padding: 48px 20px; color: var(--text-faint); }
 .round-status__content svg { color: var(--pink); margin-bottom: 12px; }
 .round-status__content p { font-size: 14px; max-width: 280px; margin: 0 auto 10px; }
+.round-status__btn { margin-top: 6px; }
+.round-status__btn svg { color: currentColor; margin-bottom: 0; }
 
 /* chart */
 .panel--chart { position: relative; }

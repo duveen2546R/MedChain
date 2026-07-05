@@ -1,5 +1,7 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import hre from "hardhat";
+
+const { ethers } = hre;
 
 describe("MedChain ledger contracts", function () {
   async function deployFixture() {
