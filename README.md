@@ -1,25 +1,33 @@
 # MedChain AI
 
-MedChain is a backend-coordinated federated model-update service. Hospital clients train models
-outside this repository and submit weight vectors plus measured metrics through the authenticated
-API. The FastAPI service validates submissions, persists operational state in MongoDB, stores
-artifacts privately in Azure Blob Storage, and performs sample-weighted federated averaging.
-
-The application has no browser-side training simulation, synthetic server-side trainer, random
-inference endpoint, in-memory production repository, demo accounts, or fabricated blockchain
-transactions.
+MedChain is a backend-coordinated federated-learning service. Hospital clients (see `clients/`)
+train a real logistic-regression diagnostic model on their local data shards and submit weight
+vectors plus measured metrics through the authenticated API. The FastAPI service stress-tests each
+update against a synthetic digital twin, screens for poisoning, performs sample-weighted federated
+averaging, persists operational state in MongoDB, stores artifacts privately in Azure Blob Storage,
+and records every contribution and reputation change on an embedded consortium blockchain.
 
 ## Implemented features
 
 - Account registration, login, bearer authentication, and role-based authorization.
 - MongoDB-backed organizations, hospitals, objectives, rounds, submissions, model versions, and audit events.
-- Objective-based selection of active hospital participants.
+- Objective-based selection of active hospital participants, weighted by on-chain reputation.
 - Organization-bound model update submission with raw patient-data key rejection.
-- Model schema, dimension, metric, and sample-count validation.
-- Sample-weighted federated averaging based only on hospital-submitted updates.
+- Digital-twin validation gate: every update is evaluated on a synthetic stress-test set before it
+  can join the global model (accuracy floor, regression check, magnitude cap, reported-metric
+  plausibility) plus a cross-client anomaly screen (median/MAD outliers, opposing directions).
+- Sample-weighted federated averaging of verified updates only, with independent server-side
+  (digital-twin) evaluation of every aggregated model version.
+- Dynamic on-chain reputation: verified contributions earn reputation, rejected ones lose it, and
+  hospital routing genuinely favors reliable nodes; full history at
+  `GET /hospitals/{id}/reputation/history`.
+- Real confidence-based inference (`POST /inference/predict`): predictions from the actual
+  aggregated global weights, with confidence tiers and a specialist-consultation flag for
+  low-confidence cases. Only derived values are audit-logged, never raw features.
 - Mandatory Azure Blob Storage for model updates and aggregated model artifacts.
-- Confirmed EVM transactions for hospital registration, contribution hashes, and reputation updates.
-- Authenticated dashboard polling real backend state.
+- Embedded consortium blockchain: signed, hash-linked blocks for hospital registration, contribution hashes, and reputation, verified on every startup.
+- Authenticated dashboard: reported vs twin-evaluated accuracy, gate rejections, reputation deltas, and a block explorer for audit roles.
+- Real federated hospital clients and an end-to-end demo: `python clients/run_demo.py` (see `clients/README.md`), including a `--poison` mode that demonstrates the gate live.
 
 ## MongoDB Atlas setup
 
@@ -44,19 +52,28 @@ The backend validates container access during startup and does not fall back to 
 
 ## Blockchain setup
 
-Use an EVM RPC provider and a dedicated funded wallet. Add the RPC URL, chain ID, and private key
-to `backend/.env`, deploy the contracts, then copy the printed addresses back into the environment:
+None required. The backend runs an embedded consortium blockchain: hash-linked, ECDSA-signed
+blocks persisted in the `blockchain_blocks` MongoDB collection. It starts automatically with the
+API — no local node, RPC provider, contract deployment, or address configuration.
 
-```bash
-cd contracts
-npm install
-npm test
-npm run deploy -- --network configured
-```
+The chain enforces the same rules the Solidity contracts did: hospital wallets register to exactly
+one organization, reputation is seeded once, and each round accepts one contribution per wallet.
+Every block header commits to the previous block hash and the merkle root of its transactions, and
+the whole chain is re-verified on startup, so tampering with stored history fails the boot.
+Only metadata and content hashes go on-chain; model weights stay in Azure Blob Storage.
 
-The deployment wallet remains owner of all three contracts because the backend uses it to register
-hospital wallets and sign `TrainingLedger.recordContribution` transactions. For production, place
-the private key in the hosting platform's secret manager rather than a checked-in file.
+Optional environment values:
+
+- `MEDCHAIN_CHAIN_ID` (default `7777`).
+- `MEDCHAIN_SIGNER_PRIVATE_KEY` — the consortium authority key that signs blocks. When unset, a
+  key is derived from `MEDCHAIN_SECRET_KEY`. Keep whichever is used stable; the stored chain
+  rejects an authority change.
+
+Auditor-facing endpoints: `GET /blockchain/blocks` (signed block explorer),
+`GET /blockchain/verify` (full integrity check), and `GET /blockchain/contributions`.
+
+The Solidity contracts in `contracts/` are kept as the reference EVM implementation of the same
+rules and are no longer required to run the application.
 
 ## Application setup
 
@@ -122,7 +139,8 @@ it is not presented as an independently evaluated global accuracy.
 ```text
 frontend/        React/Vite API client
 backend/         FastAPI service, MongoDB repository, services, and tests
-contracts/       Solidity contracts, tests, and deployment script used by FastAPI
+clients/         Real federated hospital clients, demo orchestrator, digital-twin generator
+contracts/       Reference Solidity contracts (not required to run the application)
 ```
 
 Local `.env` files are ignored. Committed `.env.example` files document required configuration.

@@ -23,13 +23,17 @@ class Settings:
     azure_storage_connection_string: str | None = None
     azure_storage_account_url: str | None = None
     azure_storage_container: str | None = None
-    evm_rpc_url: str | None = None
-    evm_chain_id: int | None = None
-    evm_signer_private_key: str | None = None
-    consortium_registry_address: str | None = None
-    reputation_registry_address: str | None = None
-    training_ledger_address: str | None = None
-    evm_receipt_timeout_seconds: int = 120
+    chain_id: int = 7777
+    signer_private_key: str | None = None
+    digital_twin_path: str | None = str(Path(__file__).resolve().parent / "data" / "digital_twin.json")
+    twin_floor_accuracy: float = 0.60
+    twin_regression_tolerance: float = 0.05
+    anomaly_distance_cap: float = 10.0
+    anomaly_mad_threshold: float = 3.5
+    reported_metric_tolerance: float = 0.30
+    reputation_reward: int = 2
+    reputation_penalty: int = 10
+    inference_low_confidence: float = 0.70
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_admin_name: str = "Platform Administrator"
@@ -38,7 +42,6 @@ class Settings:
         self,
         require_mongodb: bool = True,
         require_azure_storage: bool = True,
-        require_blockchain: bool = True,
     ) -> None:
         if len(self.secret_key) < 32:
             raise RuntimeError("MEDCHAIN_SECRET_KEY must contain at least 32 characters")
@@ -51,27 +54,10 @@ class Settings:
                 raise RuntimeError(
                     "AZURE_STORAGE_CONNECTION_STRING or AZURE_STORAGE_ACCOUNT_URL is required"
                 )
-        if require_blockchain:
-            blockchain_values = {
-                "MEDCHAIN_EVM_RPC_URL": self.evm_rpc_url,
-                "MEDCHAIN_EVM_CHAIN_ID": self.evm_chain_id,
-                "MEDCHAIN_EVM_SIGNER_PRIVATE_KEY": self.evm_signer_private_key,
-                "MEDCHAIN_CONSORTIUM_REGISTRY_ADDRESS": self.consortium_registry_address,
-                "MEDCHAIN_REPUTATION_REGISTRY_ADDRESS": self.reputation_registry_address,
-                "MEDCHAIN_TRAINING_LEDGER_ADDRESS": self.training_ledger_address,
-            }
-            missing = [name for name, value in blockchain_values.items() if value in {None, ""}]
-            if missing:
-                raise RuntimeError(f"Missing blockchain configuration: {', '.join(missing)}")
-            if not re.fullmatch(r"(?:0x)?[0-9a-fA-F]{64}", self.evm_signer_private_key or ""):
-                raise RuntimeError("MEDCHAIN_EVM_SIGNER_PRIVATE_KEY must be a 32-byte hex private key")
-            for name, address in (
-                ("MEDCHAIN_CONSORTIUM_REGISTRY_ADDRESS", self.consortium_registry_address),
-                ("MEDCHAIN_REPUTATION_REGISTRY_ADDRESS", self.reputation_registry_address),
-                ("MEDCHAIN_TRAINING_LEDGER_ADDRESS", self.training_ledger_address),
-            ):
-                if not re.fullmatch(r"0x[0-9a-fA-F]{40}", address or ""):
-                    raise RuntimeError(f"{name} must be an EVM contract address")
+        if self.signer_private_key and not re.fullmatch(
+            r"(?:0x)?[0-9a-fA-F]{64}", self.signer_private_key
+        ):
+            raise RuntimeError("MEDCHAIN_SIGNER_PRIVATE_KEY must be a 32-byte hex private key")
         if bool(self.bootstrap_admin_email) != bool(self.bootstrap_admin_password):
             raise RuntimeError(
                 "MEDCHAIN_BOOTSTRAP_ADMIN_EMAIL and MEDCHAIN_BOOTSTRAP_ADMIN_PASSWORD must be set together"
@@ -95,17 +81,26 @@ class Settings:
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING"),
             azure_storage_account_url=os.getenv("AZURE_STORAGE_ACCOUNT_URL"),
             azure_storage_container=os.getenv("AZURE_STORAGE_CONTAINER"),
-            evm_rpc_url=os.getenv("MEDCHAIN_EVM_RPC_URL"),
-            evm_chain_id=(
-                int(os.environ["MEDCHAIN_EVM_CHAIN_ID"])
-                if os.getenv("MEDCHAIN_EVM_CHAIN_ID")
-                else None
+            chain_id=int(os.getenv("MEDCHAIN_CHAIN_ID", str(cls.chain_id))),
+            signer_private_key=(
+                os.getenv("MEDCHAIN_SIGNER_PRIVATE_KEY")
+                or os.getenv("MEDCHAIN_EVM_SIGNER_PRIVATE_KEY")
             ),
-            evm_signer_private_key=os.getenv("MEDCHAIN_EVM_SIGNER_PRIVATE_KEY"),
-            consortium_registry_address=os.getenv("MEDCHAIN_CONSORTIUM_REGISTRY_ADDRESS"),
-            reputation_registry_address=os.getenv("MEDCHAIN_REPUTATION_REGISTRY_ADDRESS"),
-            training_ledger_address=os.getenv("MEDCHAIN_TRAINING_LEDGER_ADDRESS"),
-            evm_receipt_timeout_seconds=int(os.getenv("MEDCHAIN_EVM_RECEIPT_TIMEOUT_SECONDS", "120")),
+            digital_twin_path=os.getenv("MEDCHAIN_DIGITAL_TWIN_PATH", cls.digital_twin_path),
+            twin_floor_accuracy=float(os.getenv("MEDCHAIN_TWIN_FLOOR_ACCURACY", str(cls.twin_floor_accuracy))),
+            twin_regression_tolerance=float(
+                os.getenv("MEDCHAIN_TWIN_REGRESSION_TOLERANCE", str(cls.twin_regression_tolerance))
+            ),
+            anomaly_distance_cap=float(os.getenv("MEDCHAIN_ANOMALY_DISTANCE_CAP", str(cls.anomaly_distance_cap))),
+            anomaly_mad_threshold=float(os.getenv("MEDCHAIN_ANOMALY_MAD_THRESHOLD", str(cls.anomaly_mad_threshold))),
+            reported_metric_tolerance=float(
+                os.getenv("MEDCHAIN_REPORTED_METRIC_TOLERANCE", str(cls.reported_metric_tolerance))
+            ),
+            reputation_reward=int(os.getenv("MEDCHAIN_REPUTATION_REWARD", str(cls.reputation_reward))),
+            reputation_penalty=int(os.getenv("MEDCHAIN_REPUTATION_PENALTY", str(cls.reputation_penalty))),
+            inference_low_confidence=float(
+                os.getenv("MEDCHAIN_INFERENCE_LOW_CONFIDENCE", str(cls.inference_low_confidence))
+            ),
             bootstrap_admin_email=os.getenv("MEDCHAIN_BOOTSTRAP_ADMIN_EMAIL"),
             bootstrap_admin_password=os.getenv("MEDCHAIN_BOOTSTRAP_ADMIN_PASSWORD"),
             bootstrap_admin_name=os.getenv("MEDCHAIN_BOOTSTRAP_ADMIN_NAME", cls.bootstrap_admin_name),

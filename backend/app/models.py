@@ -94,6 +94,7 @@ class TrainingRound(APIModel):
     rejected_hospital_ids: list[str] = Field(default_factory=list)
     phase: str = "Routing hospitals"
     active_node: str | None = None
+    reputation_applied: bool = False
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: datetime | None = None
 
@@ -113,6 +114,7 @@ class Submission(APIModel):
     weights: list[float]
     status: SubmissionStatus = "submitted"
     metrics: dict[str, float] = Field(default_factory=dict)
+    evaluated_accuracy: float | None = None
     validation_report_id: str | None = None
     blockchain_tx_hash: str | None = None
     blockchain_block_number: int | None = None
@@ -126,6 +128,10 @@ class ValidationReport(APIModel):
     passed: bool
     score: float
     reasons: list[str] = Field(default_factory=list)
+    evaluated_accuracy: float | None = None
+    evaluated_loss: float | None = None
+    checks: dict[str, Any] = Field(default_factory=dict)
+    stage: Literal["submission", "aggregation"] = "submission"
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -134,9 +140,11 @@ class ModelVersion(APIModel):
     version: str
     round: int
     accuracy: float
+    evaluated_accuracy: float | None = None
     contributors: int
     artifact_uri: str
     model_hash: str
+    weights: list[float] = Field(default_factory=list)
     metric_source: str = "weighted_client_report"
     created_at: datetime = Field(default_factory=utcnow)
 
@@ -171,6 +179,8 @@ class DashboardSummary(APIModel):
     activeNode: str | None = None
     submissionsReceived: int = 0
     submissionsRequired: int = 0
+    evaluatedAccuracy: float | None = None
+    rejectedSubmissions: int = 0
     blockchainTransactions: int = 0
     blockchainChainId: int | None = None
     blockchainConnected: bool = False

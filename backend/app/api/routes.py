@@ -16,6 +16,7 @@ from ..models import (
     TrainingObjective,
     TrainingRound,
     User,
+    ValidationReport,
     new_id,
 )
 from ..security import create_access_token, hash_password, verify_password
@@ -99,6 +100,10 @@ class SubmissionCreate(BaseModel):
     update: dict[str, Any]
 
 
+class InferenceRequest(BaseModel):
+    features: list[float] = Field(min_length=1, max_length=1000)
+
+
 def get_runtime(request: Request) -> MedChainRuntime:
     return request.app.state.runtime
 
@@ -123,6 +128,7 @@ async def health(request: Request) -> dict[str, Any]:
         "blockchain_connected": request.app.state.runtime.blockchain.connected,
         "blockchain_chain_id": request.app.state.runtime.blockchain.chain_id,
         "blockchain_signer": request.app.state.runtime.blockchain.signer_address,
+        "blockchain_height": request.app.state.runtime.blockchain.height,
     }
 
 
@@ -283,6 +289,30 @@ async def register_hospital_on_chain(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/hospitals/{hospital_id}/reputation/history")
+async def hospital_reputation_history(
+    hospital_id: str,
+    repo: Repository = Depends(get_repo),
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(
+        require_roles("platform_admin", "auditor", "research_partner", "hospital_admin")
+    ),
+) -> dict[str, Any]:
+    hospital = await repo.get("hospitals", hospital_id, Hospital)
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+    if user.role == "hospital_admin" and user.org_id != hospital.org_id:
+        raise HTTPException(status_code=403, detail="Hospital administrators may only view their own organization")
+    if not hospital.wallet_address:
+        raise HTTPException(status_code=400, detail="Hospital has no wallet address")
+    return {
+        "hospital_id": hospital.id,
+        "wallet_address": hospital.wallet_address,
+        "reputation": hospital.reputation,
+        "history": runtime.blockchain.reputation_history(hospital.wallet_address),
+    }
+
+
 @router.get("/training-objectives", response_model=list[TrainingObjective])
 async def list_objectives(
     repo: Repository = Depends(get_repo),
@@ -336,6 +366,31 @@ async def create_round(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/rounds/{round_id}/cancel", response_model=TrainingRound)
+async def cancel_round(
+    round_id: str,
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("platform_admin")),
+) -> TrainingRound:
+    try:
+        return await runtime.cancel_round(round_id, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/rounds/{round_id}/validations", response_model=list[ValidationReport])
+async def round_validations(
+    round_id: str,
+    repo: Repository = Depends(get_repo),
+    user: User = Depends(
+        require_roles("platform_admin", "auditor", "hospital_admin", "research_partner")
+    ),
+) -> list[ValidationReport]:
+    _ = user
+    reports = await repo.list("validation_reports", ValidationReport, round_id=round_id)
+    return sorted(reports, key=lambda report: report.created_at)
+
+
 @router.post("/rounds/{round_id}/blockchain/retry", response_model=TrainingRound)
 async def retry_round_blockchain(
     round_id: str,
@@ -365,6 +420,22 @@ async def submit_update(
         return await runtime.submit_external_update(round_id, body.hospital_id, body.update, user)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/inference/predict")
+async def inference_predict(
+    body: InferenceRequest,
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("clinic_user", "platform_admin")),
+) -> dict[str, Any]:
+    try:
+        return await runtime.run_inference(body.features, user)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -405,6 +476,25 @@ async def blockchain_contributions(
         payload.pop("weights", None)
         results.append(payload)
     return sorted(results, key=lambda item: item["submitted_at"])
+
+
+@router.get("/blockchain/blocks")
+async def blockchain_blocks(
+    limit: int = 100,
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("platform_admin", "auditor", "research_partner")),
+) -> list[dict[str, Any]]:
+    _ = user
+    return runtime.blockchain.export_blocks(limit=max(1, min(limit, 1000)))
+
+
+@router.get("/blockchain/verify")
+async def blockchain_verify(
+    runtime: MedChainRuntime = Depends(get_runtime),
+    user: User = Depends(require_roles("platform_admin", "auditor", "research_partner")),
+) -> dict[str, Any]:
+    _ = user
+    return runtime.blockchain.verify()
 
 
 @router.get("/audit/events", response_model=list[AuditEvent])

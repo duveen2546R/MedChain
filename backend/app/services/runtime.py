@@ -19,13 +19,16 @@ from ..models import (
     TrainingObjective,
     TrainingRound,
     User,
+    ValidationReport,
 )
 from ..security import contains_raw_patient_data
 from ..store import Repository
 from .aggregation import FedAvgAggregator
+from .anomaly import AnomalyDetector
 from .artifacts import ArtifactStore
 from .audit import AuditService
 from .blockchain import BlockchainService
+from .evaluation import DigitalTwin
 from .routing import RoutingService
 from .validation import ModelUpdateValidator
 
@@ -44,9 +47,11 @@ class MedChainRuntime:
         self.settings = settings
         self.audit = AuditService(repo)
         self.artifacts = artifact_store or ArtifactStore(settings)
-        self.blockchain = blockchain_service or BlockchainService(settings)
+        self.blockchain = blockchain_service or BlockchainService(settings, repo)
         self.routing = RoutingService()
-        self.validator = ModelUpdateValidator()
+        self.twin = DigitalTwin.load(settings.digital_twin_path)
+        self.validator = ModelUpdateValidator(settings, self.twin)
+        self.anomaly = AnomalyDetector(settings)
         self.aggregator = FedAvgAggregator()
         self._submission_lock = asyncio.Lock()
 
@@ -109,6 +114,10 @@ class MedChainRuntime:
             activeNode=current_round.active_node if current_round else None,
             submissionsReceived=len(submissions),
             submissionsRequired=len(current_round.selected_hospital_ids) if current_round else 0,
+            evaluatedAccuracy=versions[-1].evaluated_accuracy if versions else None,
+            rejectedSubmissions=sum(
+                1 for submission in submissions if submission.status == "rejected"
+            ),
             blockchainTransactions=sum(
                 1 for submission in all_submissions if submission.blockchain_tx_hash
             ),
@@ -203,7 +212,19 @@ class MedChainRuntime:
                 "submissions", Submission, round_id=training_round.id, status="verified"
             )
             expected_dimension = len(prior_verified[0].weights) if prior_verified else None
-            report = self.validator.validate(hospital, training_round, update, expected_dimension)
+            latest_model = await self._latest_model_version()
+            report = self.validator.validate(
+                hospital,
+                training_round,
+                update,
+                expected_dimension,
+                global_weights=(latest_model.weights or None) if latest_model else None,
+                global_evaluated_accuracy=(
+                    latest_model.evaluated_accuracy / 100
+                    if latest_model and latest_model.evaluated_accuracy is not None
+                    else None
+                ),
+            )
             await self.repo.put("validation_reports", report)
 
             artifact_uri, update_hash = await self.artifacts.put_json(
@@ -217,6 +238,7 @@ class MedChainRuntime:
                 update_hash=update_hash,
                 weights=update.weights,
                 metrics=update.metrics,
+                evaluated_accuracy=report.evaluated_accuracy,
                 status="verified" if report.passed else "rejected",
                 validation_report_id=report.id,
             )
@@ -264,6 +286,23 @@ class MedChainRuntime:
                     )
             return submission
 
+    async def cancel_round(self, round_id: str, actor: User) -> TrainingRound:
+        training_round = await self.repo.get("rounds", round_id, TrainingRound)
+        if training_round is None:
+            raise ValueError("Training round not found")
+        if training_round.status in {"completed", "failed"}:
+            raise ValueError("Only an in-flight training round can be cancelled")
+        training_round.status = "failed"
+        training_round.active_node = None
+        training_round.phase = f"Round {training_round.round_number} cancelled by administrator"
+        await self.repo.put("rounds", training_round)
+        for hospital in await self.repo.list("hospitals", Hospital):
+            if hospital.status != "idle":
+                hospital.status = "idle"
+                await self.repo.put("hospitals", hospital)
+        await self.audit.record("round.cancelled", "round", round_id, actor)
+        return training_round
+
     async def retry_round_blockchain(self, round_id: str, actor: User) -> TrainingRound:
         training_round = await self.repo.get("rounds", round_id, TrainingRound)
         if training_round is None:
@@ -274,6 +313,45 @@ class MedChainRuntime:
         await self._aggregate_round(training_round, submissions)
         await self.audit.record("round.blockchain.retried", "round", round_id, actor)
         return training_round
+
+    async def run_inference(self, features: list[float], actor: User) -> dict[str, Any]:
+        if self.twin is None:
+            raise RuntimeError("Digital twin is not configured; inference is unavailable")
+        model = await self._latest_model_version()
+        if model is None or not model.weights:
+            raise LookupError("No evaluated global model is available yet - run a training round")
+
+        probability = self.twin.predict_proba(features, model.weights)
+        confidence = max(probability, 1 - probability)
+        if confidence >= 0.9:
+            tier = "high"
+        elif confidence >= self.settings.inference_low_confidence:
+            tier = "moderate"
+        else:
+            tier = "low"
+        consultation = confidence < self.settings.inference_low_confidence
+
+        # Audit derived values only; clinical feature vectors never reach the log.
+        await self.audit.record(
+            "inference.performed",
+            "model_version",
+            model.id,
+            actor,
+            {
+                "model_version": model.version,
+                "confidence_tier": tier,
+                "specialist_consultation_recommended": consultation,
+            },
+        )
+        return {
+            "prediction": "benign" if probability >= 0.5 else "malignant",
+            "probability": round(probability, 4),
+            "confidence": round(confidence, 4),
+            "confidence_tier": tier,
+            "specialist_consultation_recommended": consultation,
+            "model_version": model.version,
+            "evaluated_accuracy": model.evaluated_accuracy,
+        }
 
     async def current_model(self) -> ModelVersion:
         versions = sorted(await self.repo.list("model_versions", ModelVersion), key=lambda item: item.round)
@@ -293,14 +371,64 @@ class MedChainRuntime:
             "audit_events": [self._dump(event) for event in audit_events],
         }
 
+    async def _latest_model_version(self) -> ModelVersion | None:
+        versions = sorted(await self.repo.list("model_versions", ModelVersion), key=lambda item: item.round)
+        return versions[-1] if versions else None
+
+    async def _demote_anomalous_submissions(
+        self,
+        training_round: TrainingRound,
+        verified: list[Submission],
+    ) -> list[Submission]:
+        flagged = self.anomaly.flag_outliers(
+            [(submission.hospital_id, submission.weights) for submission in verified]
+        )
+        if not flagged:
+            return verified
+        for submission in verified:
+            reasons = flagged.get(submission.hospital_id)
+            if not reasons:
+                continue
+            submission.status = "rejected"
+            report = ValidationReport(
+                round_id=training_round.id,
+                hospital_id=submission.hospital_id,
+                passed=False,
+                score=submission.evaluated_accuracy or 0,
+                reasons=reasons,
+                evaluated_accuracy=submission.evaluated_accuracy,
+                stage="aggregation",
+            )
+            await self.repo.put("validation_reports", report)
+            submission.validation_report_id = report.id
+            await self.repo.put("submissions", submission)
+            if submission.hospital_id in training_round.contributor_ids:
+                training_round.contributor_ids.remove(submission.hospital_id)
+            if submission.hospital_id not in training_round.rejected_hospital_ids:
+                training_round.rejected_hospital_ids.append(submission.hospital_id)
+            hospital = await self.repo.get("hospitals", submission.hospital_id, Hospital)
+            if hospital is not None:
+                hospital.status = "rejected"
+                await self.repo.put("hospitals", hospital)
+            await self.audit.record(
+                "round.submission.anomaly_rejected",
+                "submission",
+                submission.id,
+                metadata={"round_id": training_round.id, "reasons": reasons},
+            )
+        await self.repo.put("rounds", training_round)
+        return [submission for submission in verified if submission.hospital_id not in flagged]
+
     async def _aggregate_round(
         self,
         training_round: TrainingRound,
         submissions: list[Submission],
     ) -> None:
         verified = [submission for submission in submissions if submission.status == "verified"]
+        verified = await self._demote_anomalous_submissions(training_round, verified)
         if not verified:
             await self._record_submissions_on_chain(training_round, submissions, "no-model")
+            await self._apply_reputation(training_round, submissions)
             training_round.status = "failed"
             training_round.active_node = None
             training_round.phase = f"Round {training_round.round_number} failed: no valid model updates"
@@ -325,13 +453,21 @@ class MedChainRuntime:
         await self.repo.put("rounds", training_round)
 
         weights, reported_accuracy = self.aggregator.aggregate(updates)
+        evaluated_accuracy: float | None = None
+        if self.twin is not None:
+            twin_accuracy, _ = self.twin.evaluate(weights)
+            evaluated_accuracy = round(twin_accuracy * 100, 2)
+        metric_source = (
+            "digital_twin_evaluation" if evaluated_accuracy is not None else "weighted_client_report"
+        )
         artifact_uri, model_hash = await self.artifacts.put_json(
             "models",
             {
                 "round_id": training_round.id,
                 "weights": weights,
                 "contributors": training_round.contributor_ids,
-                "metric_source": "weighted_client_report",
+                "evaluated_accuracy": evaluated_accuracy,
+                "metric_source": metric_source,
             },
         )
         model_version = f"v{training_round.round_number}"
@@ -340,6 +476,7 @@ class MedChainRuntime:
             submissions,
             model_version,
         )
+        await self._apply_reputation(training_round, submissions)
         existing_model = await self.repo.find_one(
             "model_versions", ModelVersion, round=training_round.round_number
         )
@@ -349,9 +486,12 @@ class MedChainRuntime:
                 version=model_version,
                 round=training_round.round_number,
                 accuracy=reported_accuracy,
+                evaluated_accuracy=evaluated_accuracy,
                 contributors=len(verified),
                 artifact_uri=artifact_uri,
                 model_hash=model_hash,
+                weights=weights,
+                metric_source=metric_source,
             ),
         )
 
@@ -372,6 +512,45 @@ class MedChainRuntime:
             f"Round {training_round.round_number} complete - {model.version} aggregated from "
             f"{len(verified)} verified client updates"
         )
+        await self.repo.put("rounds", training_round)
+
+    async def _apply_reputation(
+        self,
+        training_round: TrainingRound,
+        submissions: list[Submission],
+    ) -> None:
+        if training_round.reputation_applied:
+            return
+        for submission in submissions:
+            hospital = await self.repo.get("hospitals", submission.hospital_id, Hospital)
+            if hospital is None or not hospital.wallet_address or not hospital.blockchain_registered:
+                continue
+            verified = submission.status == "verified"
+            delta = self.settings.reputation_reward if verified else -self.settings.reputation_penalty
+            reason = "verified_contribution" if verified else "rejected_contribution"
+            receipt, score = await self.blockchain.update_reputation(
+                hospital.wallet_address,
+                delta,
+                reason,
+                training_round.id,
+            )
+            if score == hospital.reputation and receipt is None:
+                continue
+            hospital.reputation = score
+            await self.repo.put("hospitals", hospital)
+            await self.audit.record(
+                "hospital.reputation.updated",
+                "hospital",
+                hospital.id,
+                metadata={
+                    "round_id": training_round.id,
+                    "delta": delta,
+                    "score": score,
+                    "reason": reason,
+                    "tx_hash": receipt.tx_hash if receipt else None,
+                },
+            )
+        training_round.reputation_applied = True
         await self.repo.put("rounds", training_round)
 
     async def _record_submissions_on_chain(

@@ -7,6 +7,9 @@ import Footer from "./components/Footer";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
+import Diagnosis from "./pages/Diagnosis";
+import Explorer from "./pages/Explorer";
+import Audit from "./pages/Audit";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
@@ -37,6 +40,30 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/diagnosis"
+          element={
+            <ProtectedRoute>
+              <Diagnosis />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/explorer"
+          element={
+            <ProtectedRoute>
+              <Explorer />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/audit"
+          element={
+            <ProtectedRoute>
+              <Audit />
             </ProtectedRoute>
           }
         />

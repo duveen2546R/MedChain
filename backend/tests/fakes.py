@@ -2,45 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from types import SimpleNamespace
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
-
-
-class MemoryBlockchainService:
-    """Test-only blockchain recorder; production signs real EVM transactions."""
-
-    def __init__(self) -> None:
-        self.connected = False
-        self.chain_id = 31337
-        self.signer_address = "0x00000000000000000000000000000000000000aa"
-        self.contributions: list[dict[str, Any]] = []
-
-    async def connect(self) -> None:
-        self.connected = True
-
-    async def close(self) -> None:
-        self.connected = False
-
-    async def register_hospital(
-        self,
-        wallet_address: str,
-        org_id: str,
-        reputation: int,
-    ) -> SimpleNamespace:
-        digest = hashlib.sha256(f"{wallet_address}:{org_id}:{reputation}".encode()).hexdigest()
-        return SimpleNamespace(
-            registry_tx_hash=f"0x{digest}",
-            reputation_tx_hash=f"0x{digest[::-1]}",
-        )
-
-    async def record_contribution(self, **payload: Any) -> SimpleNamespace:
-        self.contributions.append(payload)
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-        return SimpleNamespace(tx_hash=f"0x{digest}", block_number=len(self.contributions))
 
 
 class MemoryArtifactStore:

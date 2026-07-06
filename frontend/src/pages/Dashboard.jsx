@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, animate, motion } from "framer-motion";
 import Icon from "../components/Icon";
+import ConsoleTabs from "../components/ConsoleTabs";
+import { apiJson } from "../lib/api";
 import { useFederatedBackend } from "../lib/useFederatedBackend";
 import { canRunRounds, roleLabel, useAuth } from "../lib/auth";
 import "./Dashboard.css";
@@ -127,17 +129,50 @@ const sceneParticles = Array.from({ length: 10 }, (_, i) => ({
 
 export default function Dashboard() {
   const service = useFederatedBackend();
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const navigate = useNavigate();
   const role = user?.role;
   const mayRun = canRunRounds(role);
   const mayManageChain = role === "platform_admin";
+  const mayViewChain = ["platform_admin", "auditor", "research_partner"].includes(role);
   const latest = service.versions[service.versions.length - 1];
   const first = service.versions[0];
 
   // UI-only state: node search + notifications popover.
   const [query, setQuery] = useState("");
   const [alertsOpen, setAlertsOpen] = useState(false);
+
+  // Compact chain explorer for audit-capable roles.
+  const [blocks, setBlocks] = useState([]);
+  useEffect(() => {
+    if (!mayViewChain || !token) return undefined;
+    let active = true;
+    const fetchBlocks = async () => {
+      try {
+        const data = await apiJson("/blockchain/blocks?limit=8", {}, token);
+        if (active) setBlocks(data);
+      } catch {
+        /* explorer panel simply stays empty */
+      }
+    };
+    void fetchBlocks();
+    const id = window.setInterval(fetchBlocks, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [mayViewChain, token]);
+
+  // Remember each node's last reputation so score changes show a delta.
+  const repTrack = useRef({});
+  service.hospitals.forEach((h) => {
+    const entry = repTrack.current[h.id];
+    if (!entry) {
+      repTrack.current[h.id] = { value: h.reputation, delta: 0 };
+    } else if (entry.value !== h.reputation) {
+      repTrack.current[h.id] = { value: h.reputation, delta: h.reputation - entry.value };
+    }
+  });
 
   function onLogout() {
     logout();
@@ -205,14 +240,19 @@ export default function Dashboard() {
   const chartW = 620;
   const chartH = 190;
   const accs = service.versions.map((v) => v.accuracy);
-  const lo = accs.length ? Math.max(0, Math.floor(Math.min(...accs)) - 5) : 0;
-  const hi = accs.length ? Math.min(100, Math.ceil(Math.max(...accs)) + 3) : 100;
-  const points = service.versions.map((v, i) => {
-    const x = service.versions.length === 1 ? chartW / 2 : (i / (service.versions.length - 1)) * chartW;
-    const y = chartH - ((v.accuracy - lo) / (hi - lo || 1)) * chartH;
-    return { x, y, v };
-  });
+  const evals = service.versions.map((v) => v.evaluated_accuracy).filter((v) => v != null);
+  const allValues = [...accs, ...evals];
+  const lo = allValues.length ? Math.max(0, Math.floor(Math.min(...allValues)) - 5) : 0;
+  const hi = allValues.length ? Math.min(100, Math.ceil(Math.max(...allValues)) + 3) : 100;
+  const xAt = (i) =>
+    service.versions.length === 1 ? chartW / 2 : (i / (service.versions.length - 1)) * chartW;
+  const yAt = (value) => chartH - ((value - lo) / (hi - lo || 1)) * chartH;
+  const points = service.versions.map((v, i) => ({ x: xAt(i), y: yAt(v.accuracy), v }));
+  const evalPoints = service.versions
+    .map((v, i) => (v.evaluated_accuracy != null ? { x: xAt(i), y: yAt(v.evaluated_accuracy), v } : null))
+    .filter(Boolean);
   const linePath = smoothPath(points);
+  const evalPath = smoothPath(evalPoints);
   const areaPath = points.length > 1 ? `${linePath} L ${chartW} ${chartH} L 0 ${chartH} Z` : "";
 
   return (
@@ -323,6 +363,8 @@ export default function Dashboard() {
           </div>
         </motion.header>
 
+        <ConsoleTabs />
+
         {/* ============ page heading ============ */}
         <motion.section
           className="dash__hero"
@@ -382,7 +424,11 @@ export default function Dashboard() {
               )}
             </div>
             <div className="kpi__foot">
-              <span className="kpi__sub">{latest ? "across aggregated versions" : "No model aggregated yet"}</span>
+              <span className="kpi__sub">
+                {service.evaluatedAccuracy != null
+                  ? `digital-twin evaluated ${service.evaluatedAccuracy}%`
+                  : latest ? "across aggregated versions" : "No model aggregated yet"}
+              </span>
               <Sparkline values={accs} />
             </div>
           </motion.div>
@@ -422,7 +468,12 @@ export default function Dashboard() {
                 transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
               />
             </div>
-            <span className="kpi__sub">hospital updates received by API</span>
+            <span className="kpi__sub">
+              hospital updates received by API
+              {service.rejectedSubmissions > 0 && (
+                <> · <span className="kpi__reject tnum">{service.rejectedSubmissions} rejected by gate</span></>
+              )}
+            </span>
           </motion.div>
 
           <motion.div variants={kpiItem} className="kpi">
@@ -434,7 +485,7 @@ export default function Dashboard() {
               <b className="kpi__value"><AnimatedNumber value={service.blockchainTransactions} /></b>
             </div>
             <div className="kpi__foot">
-              <span className="kpi__sub">EVM chain {service.blockchainChainId || "—"}</span>
+              <span className="kpi__sub">Consortium chain {service.blockchainChainId || "—"}</span>
               <span className={`kpi__chip ${service.blockchainConnected ? "is-ok" : "is-off"}`}>
                 <i /> {service.blockchainConnected ? "Connected" : "Offline"}
               </span>
@@ -517,7 +568,14 @@ export default function Dashboard() {
                       <div className="node__rep">
                         <span>Reputation</span>
                         <div className="bar"><motion.i animate={{ width: `${h.reputation}%` }} transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }} /></div>
-                        <b className="tnum">{h.reputation}</b>
+                        <b className="tnum">
+                          {h.reputation}
+                          {repTrack.current[h.id]?.delta !== 0 && (
+                            <span className={`node__repdelta ${repTrack.current[h.id].delta > 0 ? "is-up" : "is-down"}`}>
+                              {repTrack.current[h.id].delta > 0 ? "▲" : "▼"}{Math.abs(repTrack.current[h.id].delta)}
+                            </span>
+                          )}
+                        </b>
                       </div>
                       <span className={`node__health ${health.cls}`}><i /> {health.label}</span>
                       {h.contribution > 0 && (
@@ -619,7 +677,10 @@ export default function Dashboard() {
             <div className="panel__head">
               <div>
                 <h3>Accuracy History</h3>
-                <span className="panel__caption">Sample-weighted client metrics</span>
+                <span className="panel__caption">
+                  <i className="chart__key chart__key--reported" /> client-reported ·{" "}
+                  <i className="chart__key chart__key--evaluated" /> digital-twin evaluated
+                </span>
               </div>
               <span className="panel__tag">{service.versions.length} point{service.versions.length === 1 ? "" : "s"}</span>
             </div>
@@ -656,6 +717,25 @@ export default function Dashboard() {
                     animate={{ pathLength: 1 }}
                     transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
                   />
+                  {evalPath && (
+                    <motion.path
+                      d={evalPath}
+                      fill="none"
+                      className="chart__eval"
+                      strokeWidth="2"
+                      strokeDasharray="6 5"
+                      strokeLinecap="round"
+                      initial={{ pathLength: 0 }}
+                      animate={{ pathLength: 1 }}
+                      transition={{ duration: 1.2, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    />
+                  )}
+                  {evalPoints.map((p) => (
+                    <g key={`eval-${p.v.version}`} className="chart__pt chart__pt--eval">
+                      <circle cx={p.x} cy={p.y} r="3.2" />
+                      <title>{`${p.v.version} · twin-evaluated ${p.v.evaluated_accuracy}%`}</title>
+                    </g>
+                  ))}
                   {points.map((p) => (
                     <g key={p.v.version} className="chart__pt">
                       <circle cx={p.x} cy={p.y} r="4" />
@@ -694,7 +774,12 @@ export default function Dashboard() {
                 <div className="ver" key={v.version}>
                   <span className="ver__tag">{v.version}</span>
                   <div className="ver__mid">
-                    <b className="tnum">{v.accuracy}%</b>
+                    <b className="tnum">
+                      {v.accuracy}%
+                      {v.evaluated_accuracy != null && (
+                        <span className="ver__eval tnum"> · twin {v.evaluated_accuracy}%</span>
+                      )}
+                    </b>
                     <span>Round {v.round} · {v.contributors} contributor{v.contributors === 1 ? "" : "s"}</span>
                   </div>
                   <div className="ver__bar">
@@ -704,12 +789,46 @@ export default function Dashboard() {
               ))}
             </div>
           </motion.section>
+
+          {/* -------- consortium chain explorer -------- */}
+          {mayViewChain && (
+            <motion.section
+              className="panel panel--chain"
+              initial={{ opacity: 0, y: 22 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.52, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="panel__head">
+                <div>
+                  <h3>Consortium Chain Explorer</h3>
+                  <span className="panel__caption">Signed blocks · newest first · 10s sync</span>
+                </div>
+                <span className="panel__tag">height {blocks.length ? blocks[0].number : "—"}</span>
+              </div>
+              <div className="chainx">
+                {blocks.length === 0 && <p className="nodes__empty">No blocks to display.</p>}
+                {blocks.map((b) => (
+                  <div className="chainx__row" key={b.id}>
+                    <span className="chainx__num tnum">#{b.number}</span>
+                    <div className="chainx__mid">
+                      <b>{b.transactions.map((t) => t.type.replaceAll("_", " ")).join(", ") || "empty block"}</b>
+                      <span title={b.hash}>
+                        {b.hash.slice(0, 18)}… · {new Date(b.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <span className="chainx__txs tnum">{b.transactions.length} tx</span>
+                  </div>
+                ))}
+              </div>
+            </motion.section>
+          )}
         </div>
 
         <p className="dash__foot">
           Every value on this dashboard comes from the authenticated FastAPI service. Hospital clients
-          submit model updates through the API; the backend validates and aggregates them, stores artifacts
-          in Azure, and records confirmed contribution hashes on the configured EVM chain.
+          train locally and submit real model updates through the API; the backend stress-tests each one
+          against the digital twin, aggregates the survivors, stores artifacts in Azure, and records every
+          contribution and reputation change on the embedded consortium blockchain.
         </p>
       </div>
     </main>

@@ -13,6 +13,8 @@ const EMPTY_SUMMARY = {
   activeNode: null,
   submissionsReceived: 0,
   submissionsRequired: 0,
+  evaluatedAccuracy: null,
+  rejectedSubmissions: 0,
   blockchainTransactions: 0,
   blockchainChainId: null,
   blockchainConnected: false,

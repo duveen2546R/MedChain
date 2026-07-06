@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -8,13 +9,19 @@ from backend.app.config import Settings
 from backend.app.main import create_app
 from backend.app.models import Hospital, Organization, TrainingObjective, User
 from backend.app.security import hash_password
-from backend.tests.fakes import MemoryArtifactStore, MemoryBlockchainService, MemoryRepository
+from backend.app.services.blockchain import BlockchainService
+from backend.tests.fakes import MemoryArtifactStore, MemoryRepository
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-thirty-two-characters"
 TEST_PASSWORD = "test-password-123"
+TWIN_FIXTURE = str(Path(__file__).parent / "data" / "twin_fixture.json")
 
 
-async def seed_test_records(repo: MemoryRepository, settings: Settings) -> None:
+async def seed_test_records(
+    repo: MemoryRepository,
+    settings: Settings,
+    blockchain: BlockchainService,
+) -> None:
     platform = await repo.put(
         "organizations",
         Organization(id="org_platform", name="Platform", type="platform", tier="internal"),
@@ -43,10 +50,19 @@ async def seed_test_records(repo: MemoryRepository, settings: Settings) -> None:
     )
 
     hospitals = [
-        Hospital(id="h1", org_id="org_h1", name="Hospital One", region="North", samples=1000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000001", blockchain_registered=True),
-        Hospital(id="h2", org_id="org_h2", name="Hospital Two", region="South", samples=2000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000002", blockchain_registered=True),
-        Hospital(id="h3", org_id="org_h3", name="Hospital Three", region="West", samples=1500, specialty="Cardiology", wallet_address="0x0000000000000000000000000000000000000003", blockchain_registered=False),
+        Hospital(id="h1", org_id="org_h1", name="Hospital One", region="North", samples=1000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000001"),
+        Hospital(id="h2", org_id="org_h2", name="Hospital Two", region="South", samples=2000, specialty="Radiology", wallet_address="0x0000000000000000000000000000000000000002"),
+        Hospital(id="h3", org_id="org_h3", name="Hospital Three", region="West", samples=1500, specialty="Cardiology", wallet_address="0x0000000000000000000000000000000000000003"),
     ]
+    await blockchain.connect()
+    for hospital in hospitals:
+        if hospital.id != "h3":
+            receipt = await blockchain.register_hospital(
+                hospital.wallet_address, hospital.org_id, hospital.reputation
+            )
+            hospital.blockchain_registered = True
+            hospital.registry_tx_hash = receipt.registry_tx_hash
+            hospital.reputation_tx_hash = receipt.reputation_tx_hash
     for hospital in hospitals:
         await repo.put(
             "organizations",
@@ -78,15 +94,16 @@ async def seed_test_records(repo: MemoryRepository, settings: Settings) -> None:
 
 
 def client() -> TestClient:
-    settings = Settings(secret_key=TEST_SECRET)
+    settings = Settings(secret_key=TEST_SECRET, digital_twin_path=TWIN_FIXTURE)
     repo = MemoryRepository()
-    asyncio.run(seed_test_records(repo, settings))
+    blockchain = BlockchainService(settings, repo)
+    asyncio.run(seed_test_records(repo, settings, blockchain))
     return TestClient(
         create_app(
             settings,
             repository=repo,
             artifact_store=MemoryArtifactStore(),
-            blockchain_service=MemoryBlockchainService(),
+            blockchain_service=blockchain,
         )
     )
 
@@ -106,9 +123,17 @@ def auth(token: str) -> dict[str, str]:
 
 
 def valid_update(samples: int, accuracy: float, offset: float = 0) -> dict:
+    # Weights separate the twin fixture on feature 0, so they pass the gate.
     return {
-        "weights": [0.1 + offset, 0.2 + offset, 0.3 + offset],
+        "weights": [4.0 + offset, offset, offset, offset],
         "metrics": {"local_accuracy": accuracy, "loss": 0.1, "samples": samples},
+    }
+
+
+def poisoned_update(samples: int) -> dict:
+    return {
+        "weights": [-4.0, 0.0, 0.0, 0.0],
+        "metrics": {"local_accuracy": 0.9, "loss": 0.1, "samples": samples},
     }
 
 
@@ -178,14 +203,105 @@ def test_round_aggregates_only_submitted_hospital_updates() -> None:
         model = test_client.get("/model-versions/current", headers=auth(admin_token))
         assert model.status_code == 200
         assert model.json()["accuracy"] == 86.67
+        assert model.json()["evaluated_accuracy"] == 100.0
         assert model.json()["contributors"] == 2
-        assert model.json()["metric_source"] == "weighted_client_report"
+        assert model.json()["metric_source"] == "digital_twin_evaluation"
+        assert len(model.json()["weights"]) == 4
         contributions = test_client.get(
             "/blockchain/contributions", headers=auth(admin_token)
         )
         assert contributions.status_code == 200
         assert len(contributions.json()) == 2
         assert all(item["blockchain_tx_hash"] for item in contributions.json())
+
+        verification = test_client.get("/blockchain/verify", headers=auth(admin_token))
+        assert verification.status_code == 200
+        assert verification.json()["valid"] is True
+        blocks = test_client.get("/blockchain/blocks", headers=auth(admin_token))
+        assert blocks.status_code == 200
+        recorded = [
+            transaction
+            for block in blocks.json()
+            for transaction in block["transactions"]
+            if transaction["type"] == "contribution_recorded"
+        ]
+        assert len(recorded) == 2
+
+        hospitals = {
+            hospital["id"]: hospital
+            for hospital in test_client.get("/hospitals", headers=auth(admin_token)).json()
+        }
+        assert hospitals["h1"]["reputation"] == 82
+        assert hospitals["h2"]["reputation"] == 82
+
+        history = test_client.get(
+            "/hospitals/h1/reputation/history", headers=auth(admin_token)
+        )
+        assert history.status_code == 200
+        assert history.json()["reputation"] == 82
+        assert [item["type"] for item in history.json()["history"]] == [
+            "reputation_seeded",
+            "reputation_updated",
+        ]
+
+
+def test_digital_twin_gate_rejects_poisoned_update() -> None:
+    with client() as test_client:
+        admin_token = login(test_client)
+        training_round = test_client.post("/rounds", json={}, headers=auth(admin_token)).json()
+        assert set(training_round["selected_hospital_ids"]) == {"h1", "h2"}
+
+        good = test_client.post(
+            f"/rounds/{training_round['id']}/submissions",
+            json={"hospital_id": "h1", "update": valid_update(1000, 0.9)},
+            headers=auth(login(test_client, "h1@example.com")),
+        )
+        assert good.status_code == 200
+        assert good.json()["status"] == "verified"
+
+        poisoned = test_client.post(
+            f"/rounds/{training_round['id']}/submissions",
+            json={"hospital_id": "h2", "update": poisoned_update(2000)},
+            headers=auth(login(test_client, "h2@example.com")),
+        )
+        assert poisoned.status_code == 200
+        assert poisoned.json()["status"] == "rejected"
+        assert poisoned.json()["evaluated_accuracy"] == 0.0
+
+        completed = test_client.get(
+            f"/rounds/{training_round['id']}", headers=auth(admin_token)
+        ).json()
+        assert completed["status"] == "completed"
+        assert completed["contributor_ids"] == ["h1"]
+        assert completed["rejected_hospital_ids"] == ["h2"]
+
+        model = test_client.get("/model-versions/current", headers=auth(admin_token)).json()
+        assert model["contributors"] == 1
+        assert model["evaluated_accuracy"] == 100.0
+
+        hospitals = {
+            hospital["id"]: hospital
+            for hospital in test_client.get("/hospitals", headers=auth(admin_token)).json()
+        }
+        assert hospitals["h1"]["reputation"] == 82
+        assert hospitals["h2"]["reputation"] == 70
+
+        validations = test_client.get(
+            f"/rounds/{training_round['id']}/validations", headers=auth(admin_token)
+        ).json()
+        failed = [report for report in validations if not report["passed"]]
+        assert len(failed) == 1
+        assert any("Digital-twin stress test failed" in reason for reason in failed[0]["reasons"])
+
+        blocks = test_client.get("/blockchain/blocks", headers=auth(admin_token)).json()
+        recorded = [
+            transaction
+            for block in blocks
+            for transaction in block["transactions"]
+            if transaction["type"] == "contribution_recorded"
+        ]
+        assert len(recorded) == 2
+        assert sorted(item["payload"]["validated"] for item in recorded) == [False, True]
 
 
 def test_submission_rejects_raw_patient_data() -> None:
@@ -234,6 +350,101 @@ def test_platform_admin_registers_hospital_wallet_on_chain() -> None:
 def test_removed_fabricated_endpoints_are_not_exposed() -> None:
     with client() as test_client:
         token = login(test_client)
-        assert test_client.post("/inference/predict", json={}, headers=auth(token)).status_code == 404
         assert test_client.get("/ledger/events", headers=auth(token)).status_code == 404
         assert test_client.post("/dashboard/reset", headers=auth(token)).status_code == 404
+
+
+def run_full_round(test_client: TestClient, admin_token: str) -> None:
+    training_round = test_client.post("/rounds", json={}, headers=auth(admin_token)).json()
+    updates = {"h1": valid_update(1000, 0.8), "h2": valid_update(2000, 0.9, 0.1)}
+    for hospital_id in training_round["selected_hospital_ids"]:
+        node_token = login(test_client, f"{hospital_id}@example.com")
+        response = test_client.post(
+            f"/rounds/{training_round['id']}/submissions",
+            json={"hospital_id": hospital_id, "update": updates[hospital_id]},
+            headers=auth(node_token),
+        )
+        assert response.status_code == 200
+
+
+def test_admin_can_cancel_a_stuck_round() -> None:
+    with client() as test_client:
+        admin_token = login(test_client)
+        training_round = test_client.post("/rounds", json={}, headers=auth(admin_token)).json()
+        blocked = test_client.post("/rounds", json={}, headers=auth(admin_token))
+        assert blocked.status_code == 409
+
+        cancelled = test_client.post(
+            f"/rounds/{training_round['id']}/cancel", headers=auth(admin_token)
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "failed"
+
+        next_round = test_client.post("/rounds", json={}, headers=auth(admin_token))
+        assert next_round.status_code == 200
+
+        already_done = test_client.post(
+            f"/rounds/{training_round['id']}/cancel", headers=auth(admin_token)
+        )
+        assert already_done.status_code == 409
+
+
+def test_inference_requires_an_aggregated_model() -> None:
+    with client() as test_client:
+        token = login(test_client)
+        response = test_client.post(
+            "/inference/predict", json={"features": [3.0, 0.0, 0.0]}, headers=auth(token)
+        )
+        assert response.status_code == 409
+
+
+def test_inference_predicts_from_real_global_weights() -> None:
+    with client() as test_client:
+        admin_token = login(test_client)
+        run_full_round(test_client, admin_token)
+
+        confident = test_client.post(
+            "/inference/predict", json={"features": [3.0, 0.0, 0.0]}, headers=auth(admin_token)
+        )
+        assert confident.status_code == 200
+        payload = confident.json()
+        assert payload["prediction"] == "benign"
+        assert payload["confidence"] > 0.99
+        assert payload["confidence_tier"] == "high"
+        assert payload["specialist_consultation_recommended"] is False
+        assert payload["model_version"] == "v1"
+
+        uncertain = test_client.post(
+            "/inference/predict", json={"features": [0.01, 0.0, 0.0]}, headers=auth(admin_token)
+        )
+        assert uncertain.status_code == 200
+        assert uncertain.json()["confidence_tier"] == "low"
+        assert uncertain.json()["specialist_consultation_recommended"] is True
+
+        wrong_count = test_client.post(
+            "/inference/predict", json={"features": [1.0]}, headers=auth(admin_token)
+        )
+        assert wrong_count.status_code == 400
+
+        node_token = login(test_client, "h1@example.com")
+        forbidden = test_client.post(
+            "/inference/predict", json={"features": [3.0, 0.0, 0.0]}, headers=auth(node_token)
+        )
+        assert forbidden.status_code == 403
+
+        registered = test_client.post(
+            "/auth/register",
+            json={
+                "name": "Clinic User",
+                "email": "clinic@example.com",
+                "password": "supersecret1",
+                "organization": "Downtown Clinic",
+                "account_type": "clinic",
+            },
+        )
+        assert registered.status_code == 201
+        clinic_token = registered.json()["access_token"]
+        clinic_response = test_client.post(
+            "/inference/predict", json={"features": [3.0, 0.0, 0.0]}, headers=auth(clinic_token)
+        )
+        assert clinic_response.status_code == 200
