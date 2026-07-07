@@ -1,9 +1,44 @@
 # MedChain hospital clients
 
 Real federated-learning participants. Each hospital trains a logistic-regression
-diagnostic model (breast-cancer dataset, 30 features) on its own deterministic
-data shard and submits only the 31-dim weight vector plus measured metrics.
-Raw rows never leave the client.
+diagnostic model on its **own local data** and submits only the weight vector plus
+measured metrics — raw rows never leave the client. Two data sources are supported:
+
+- **Bring-your-own CSV (real mode):** the coordinator creates a training objective by
+  uploading a labeled validation CSV; the server derives the feature schema + scaler.
+  Each node fetches that schema and trains on its own CSV with matching columns.
+- **Built-in dataset (demo mode):** a shard of scikit-learn's breast-cancer dataset,
+  used by `run_demo.py` so the whole flow runs out of the box.
+
+## Independent node agent (real deployment)
+
+A hospital runs the agent on its own infrastructure, pointing at its own CSV. It never
+uploads raw data. Configure via env vars (see `node_agent.py`) and run `participate`
+(one round) or `watch` (auto-join open rounds):
+
+```bash
+MEDCHAIN_API=https://api.medchain.example \
+MEDCHAIN_EMAIL=node@hospital.org MEDCHAIN_PASSWORD=... \
+MEDCHAIN_HOSPITAL_ID=hsp_123 MEDCHAIN_OBJECTIVE_ID=obj_abc \
+MEDCHAIN_CSV_PATH=/data/patients.csv \
+python clients/node_agent.py watch
+```
+
+Or with Docker (mount your CSV read-only; data stays on your host):
+
+```bash
+docker build -t medchain-node clients/
+docker run --rm \
+  -e MEDCHAIN_API=https://api.medchain.example \
+  -e MEDCHAIN_EMAIL=node@hospital.org -e MEDCHAIN_PASSWORD=... \
+  -e MEDCHAIN_HOSPITAL_ID=hsp_123 -e MEDCHAIN_OBJECTIVE_ID=obj_abc \
+  -e MEDCHAIN_CSV_PATH=/data/patients.csv \
+  -v /local/patients.csv:/data/patients.csv:ro \
+  medchain-node watch
+```
+
+The local CSV must contain the objective's feature columns and target column (fetch
+them from `GET /training-objectives/{id}/schema`).
 
 ## Setup
 

@@ -22,14 +22,17 @@ class ModelUpdateValidator:
         expected_dimension: int | None = None,
         global_weights: list[float] | None = None,
         global_evaluated_accuracy: float | None = None,
+        twin: DigitalTwin | None = None,
     ) -> ValidationReport:
+        # Per-objective twin when provided; otherwise the validator's default (global) twin.
+        twin = twin if twin is not None else self.twin
         reasons: list[str] = []
         checks: dict[str, object] = {}
         if update.schema_version != "medchain-update-v1":
             reasons.append("Unsupported model-update schema")
 
-        if self.twin is not None:
-            expected_dimension = self.twin.expected_dimension
+        if twin is not None:
+            expected_dimension = twin.expected_dimension
         if expected_dimension is not None and len(update.weights) != expected_dimension:
             reasons.append(f"Expected {expected_dimension} weights, received {len(update.weights)}")
 
@@ -50,8 +53,8 @@ class ModelUpdateValidator:
 
         evaluated_accuracy: float | None = None
         evaluated_loss: float | None = None
-        if self.twin is not None and not reasons:
-            evaluated_accuracy, evaluated_loss = self.twin.evaluate(update.weights)
+        if twin is not None and not reasons:
+            evaluated_accuracy, evaluated_loss = twin.evaluate(update.weights)
             checks["digital_twin_accuracy"] = round(evaluated_accuracy, 4)
             checks["digital_twin_loss"] = round(evaluated_loss, 4)
 

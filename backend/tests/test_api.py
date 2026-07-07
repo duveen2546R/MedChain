@@ -390,6 +390,90 @@ def run_full_round(test_client: TestClient, admin_token: str) -> None:
         assert response.status_code == 200
 
 
+BYO_CSV = (
+    "f0,f1,f2,diagnosis\n"
+    "5,1,1,positive\n"
+    "6,0,1,positive\n"
+    "5,1,0,positive\n"
+    "-5,1,1,negative\n"
+    "-6,0,1,negative\n"
+    "-5,1,0,negative\n"
+)
+
+
+def test_byo_csv_objective_drives_a_real_round_and_inference() -> None:
+    with client() as test_client:
+        admin_token = login(test_client)
+        # Coordinator uploads a labeled validation CSV → server derives the 3-feature schema.
+        objective = test_client.post(
+            "/training-objectives",
+            json={
+                "name": "Custom CSV model",
+                "disease_category": "custom",
+                "specialty": "Radiology",
+                "min_participants": 2,
+                "validation_csv": BYO_CSV,
+                "target_column": "diagnosis",
+            },
+            headers=auth(admin_token),
+        )
+        assert objective.status_code == 200
+        obj = objective.json()
+        assert obj["has_schema"] is True
+        assert obj["feature_columns"] == ["f0", "f1", "f2"]
+        assert obj["n_features"] == 3
+
+        schema = test_client.get(
+            f"/training-objectives/{obj['id']}/schema", headers=auth(admin_token)
+        ).json()
+        assert schema["expected_dimension"] == 4
+        assert schema["positive_label"] == "positive"
+
+        # Weights separate the twin on feature 0 → pass the per-objective gate (4-dim: 3 coef + bias).
+        training_round = test_client.post(
+            "/rounds", json={"objective_id": obj["id"]}, headers=auth(admin_token)
+        ).json()
+        update = {
+            "weights": [4.0, 0.0, 0.0, 0.0],
+            "metrics": {"local_accuracy": 1.0, "loss": 0.05, "samples": 100},
+        }
+        for hospital_id in training_round["selected_hospital_ids"]:
+            node_token = login(test_client, f"{hospital_id}@example.com")
+            submitted = test_client.post(
+                f"/rounds/{training_round['id']}/submissions",
+                json={"hospital_id": hospital_id, "update": update},
+                headers=auth(node_token),
+            )
+            assert submitted.status_code == 200
+
+        # A per-objective model version now exists and inference uses the CSV's own labels.
+        prediction = test_client.post(
+            "/inference/predict",
+            json={"features": [5.0, 0.0, 0.0], "objective_id": obj["id"]},
+            headers=auth(admin_token),
+        )
+        assert prediction.status_code == 200
+        body = prediction.json()
+        assert body["prediction"] == "positive"
+        assert body["evaluated_accuracy"] is not None
+
+
+def test_objective_rejects_a_malformed_validation_csv() -> None:
+    with client() as test_client:
+        admin_token = login(test_client)
+        bad = test_client.post(
+            "/training-objectives",
+            json={
+                "name": "Bad",
+                "disease_category": "x",
+                "specialty": "Radiology",
+                "validation_csv": "a,b,label\n1,2,onlyoneclass\n3,4,onlyoneclass\n",
+            },
+            headers=auth(admin_token),
+        )
+        assert bad.status_code == 400
+
+
 def test_admin_can_cancel_a_stuck_round() -> None:
     with client() as test_client:
         admin_token = login(test_client)

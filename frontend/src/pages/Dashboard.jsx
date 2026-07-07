@@ -6,6 +6,7 @@ import ConsoleTabs from "../components/ConsoleTabs";
 import { apiJson } from "../lib/api";
 import { useFederatedBackend } from "../lib/useFederatedBackend";
 import { canRunRounds, roleLabel, useAuth } from "../lib/auth";
+import NewObjective from "../components/NewObjective";
 import "./Dashboard.css";
 
 const statusMeta = {
@@ -405,6 +406,8 @@ export default function Dashboard() {
             )}
           </div>
         </motion.section>
+
+        {mayRun && <NewObjective />}
 
         {/* ============ KPI cards ============ */}
         <motion.section className="kpi-row" variants={kpiStagger} initial="hidden" animate="show">

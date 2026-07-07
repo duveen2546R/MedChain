@@ -32,6 +32,9 @@ class Settings:
     azure_storage_container: str | None = None
     chain_id: int = 7777
     signer_private_key: str | None = None
+    # "evm" runs the real Solidity contracts on an in-process EVM (free, auto, no node);
+    # "embedded" uses the hand-rolled MongoDB ledger. EVM falls back to embedded on failure.
+    chain_backend: str = "evm"
     digital_twin_path: str | None = str(Path(__file__).resolve().parent / "data" / "digital_twin.json")
     twin_floor_accuracy: float = 0.60
     twin_regression_tolerance: float = 0.05
@@ -100,6 +103,7 @@ class Settings:
             azure_storage_account_url=os.getenv("AZURE_STORAGE_ACCOUNT_URL"),
             azure_storage_container=os.getenv("AZURE_STORAGE_CONTAINER"),
             chain_id=int(os.getenv("MEDCHAIN_CHAIN_ID", str(cls.chain_id))),
+            chain_backend=os.getenv("MEDCHAIN_CHAIN_BACKEND", cls.chain_backend),
             signer_private_key=(
                 os.getenv("MEDCHAIN_SIGNER_PRIVATE_KEY")
                 or os.getenv("MEDCHAIN_EVM_SIGNER_PRIVATE_KEY")

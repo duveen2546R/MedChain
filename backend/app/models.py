@@ -124,6 +124,31 @@ class TrainingObjective(APIModel):
     min_participants: int = 3
     routing_metadata: dict[str, Any] = Field(default_factory=dict)
     created_by: str | None = None
+    # Per-objective dataset schema, derived from a coordinator-uploaded validation CSV.
+    # Absent (has_schema=False) on legacy objectives, which fall back to the global twin.
+    has_schema: bool = False
+    task: Literal["binary_classification"] = "binary_classification"
+    feature_columns: list[str] = Field(default_factory=list)
+    target_column: str | None = None
+    positive_label: str | None = None
+    negative_label: str | None = None
+    n_features: int | None = None
+    scaler_mean: list[float] = Field(default_factory=list)
+    scaler_scale: list[float] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class DigitalTwinRecord(APIModel):
+    """Per-objective labeled validation set (standardized), derived from the uploaded CSV.
+    Kept in its own collection so the large arrays stay out of the objective document."""
+
+    id: str = Field(default_factory=lambda: new_id("twin"))
+    objective_id: str
+    n_features: int
+    X: list[list[float]]
+    y: list[int]
+    positive_label: str | None = None
+    negative_label: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -181,6 +206,7 @@ class ValidationReport(APIModel):
 class ModelVersion(APIModel):
     id: str = Field(default_factory=lambda: new_id("mdl"))
     version: str
+    objective_id: str | None = None
     round: int
     accuracy: float
     evaluated_accuracy: float | None = None

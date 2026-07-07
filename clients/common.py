@@ -1,20 +1,58 @@
 """Shared dataset handling and training code for MedChain hospital clients.
 
-Each hospital trains a logistic-regression diagnostic model on its own shard of
-the breast-cancer dataset; only the resulting weight vector and measured
-metrics leave the client. The standardization scaler matches the one shipped
-with the backend's digital twin, so weights are directly comparable.
+Each hospital trains a logistic-regression diagnostic model on its OWN local
+data; only the resulting weight vector and measured metrics leave the client.
+Real deployments load a local CSV (`load_csv_dataset`) and standardize with the
+scaler the server publishes for the objective (`standardize_with`), so every
+participant preprocesses identically and weights are directly comparable. The
+breast-cancer helpers below remain only to produce the sample/demo dataset.
 """
 
 from __future__ import annotations
 
-import numpy as np
-from sklearn.datasets import load_breast_cancer
+import csv
 
-WEIGHT_DIMENSION = 31  # 30 coefficients + intercept
+import numpy as np
+
+
+def load_csv_dataset(
+    path: str,
+    feature_columns: list[str],
+    target_column: str,
+    positive_label: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Load raw (unstandardized) features + binary labels from a local CSV.
+
+    Columns are selected in the exact order the objective's schema specifies, so
+    the weight vector lines up with the server's scaler and validation set.
+    """
+    with open(path, newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"{path} has no data rows")
+    missing = [c for c in [*feature_columns, target_column] if c not in rows[0]]
+    if missing:
+        raise ValueError(f"{path} is missing required columns: {', '.join(missing)}")
+    features = np.asarray(
+        [[float(row[column]) for column in feature_columns] for row in rows], dtype=np.float64
+    )
+    labels = np.asarray(
+        [1.0 if row[target_column] == positive_label else 0.0 for row in rows], dtype=np.float64
+    )
+    return features, labels
+
+
+def standardize_with(features: np.ndarray, mean: list[float], scale: list[float]) -> np.ndarray:
+    """Standardize raw features with the server-published scaler (clients never recompute it)."""
+    mean_arr = np.asarray(mean, dtype=np.float64)
+    scale_arr = np.asarray(scale, dtype=np.float64)
+    scale_arr[scale_arr == 0] = 1.0
+    return (features - mean_arr) / scale_arr
 
 
 def load_standardized_dataset() -> tuple[np.ndarray, np.ndarray]:
+    from sklearn.datasets import load_breast_cancer
+
     dataset = load_breast_cancer()
     features = np.asarray(dataset.data, dtype=np.float64)
     labels = np.asarray(dataset.target, dtype=np.float64)

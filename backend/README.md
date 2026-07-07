@@ -80,7 +80,8 @@ Remove the bootstrap password from the deployment environment after the account 
 - `GET /dashboard/summary`
 - `GET/POST/PATCH /hospitals`
 - `POST /hospitals/{id}/blockchain/register`
-- `GET/POST /training-objectives`
+- `GET/POST /training-objectives` (optional `validation_csv` + `target_column` derive a per-objective schema)
+- `GET /training-objectives/{id}/schema` (feature columns + scaler for clients)
 - `GET/POST /rounds`, `GET /rounds/{id}`
 - `POST /rounds/{id}/submissions`
 - `POST /rounds/{id}/blockchain/retry`

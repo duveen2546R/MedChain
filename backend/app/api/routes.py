@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..models import (
     AuditEvent,
     DashboardSummary,
+    DigitalTwinRecord,
     Hospital,
     ModelVersion,
     Organization,
@@ -19,6 +20,7 @@ from ..models import (
     ValidationReport,
     new_id,
 )
+from ..services.dataset import derive_schema
 from ..services.runtime import MedChainRuntime
 from ..store import Repository
 from .auth_routes import auth_router
@@ -59,6 +61,10 @@ class ObjectiveCreate(BaseModel):
     target_value: float = 0.9
     min_participants: int = 3
     routing_metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional labeled validation CSV (raw text). When present, the server derives the
+    # per-objective feature schema + scaler + validation set from it.
+    validation_csv: str | None = None
+    target_column: str | None = None
 
 
 class RoundCreate(BaseModel):
@@ -72,6 +78,7 @@ class SubmissionCreate(BaseModel):
 
 class InferenceRequest(BaseModel):
     features: list[float] = Field(min_length=1, max_length=1000)
+    objective_id: str | None = None
 
 
 def get_runtime(request: Request) -> MedChainRuntime:
@@ -242,8 +249,57 @@ async def create_objective(
     runtime: MedChainRuntime = Depends(get_runtime),
     user: User = Depends(require_roles("platform_admin", "hospital_admin")),
 ) -> TrainingObjective:
-    objective = TrainingObjective(**body.model_dump())
-    return await runtime.create_objective(objective, user)
+    fields = body.model_dump()
+    validation_csv = fields.pop("validation_csv", None)
+    target_column = fields.pop("target_column", None)
+    objective = TrainingObjective(**fields)
+    twin_record: DigitalTwinRecord | None = None
+    if validation_csv:
+        try:
+            schema = derive_schema(validation_csv, target_column)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        objective.has_schema = True
+        objective.feature_columns = schema.feature_columns
+        objective.target_column = schema.target_column
+        objective.positive_label = schema.positive_label
+        objective.negative_label = schema.negative_label
+        objective.n_features = schema.n_features
+        objective.scaler_mean = schema.scaler_mean
+        objective.scaler_scale = schema.scaler_scale
+        twin_record = DigitalTwinRecord(
+            objective_id=objective.id,
+            n_features=schema.n_features,
+            X=schema.twin_x,
+            y=schema.twin_y,
+            positive_label=schema.positive_label,
+            negative_label=schema.negative_label,
+        )
+    return await runtime.create_objective(objective, user, twin_record=twin_record)
+
+
+@router.get("/training-objectives/{objective_id}/schema")
+async def objective_schema(
+    objective_id: str,
+    repo: Repository = Depends(get_repo),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _ = user
+    objective = await repo.get("training_objectives", objective_id, TrainingObjective)
+    if objective is None:
+        raise HTTPException(status_code=404, detail="Training objective not found")
+    if not objective.has_schema:
+        raise HTTPException(status_code=404, detail="This objective has no dataset schema")
+    return {
+        "objective_id": objective.id,
+        "feature_columns": objective.feature_columns,
+        "target_column": objective.target_column,
+        "n_features": objective.n_features,
+        "expected_dimension": (objective.n_features or 0) + 1,
+        "scaler": {"mean": objective.scaler_mean, "scale": objective.scaler_scale},
+        "positive_label": objective.positive_label,
+        "negative_label": objective.negative_label,
+    }
 
 
 @router.get("/rounds", response_model=list[TrainingRound])
@@ -345,7 +401,7 @@ async def inference_predict(
     user: User = Depends(require_roles("clinic_user", "platform_admin")),
 ) -> dict[str, Any]:
     try:
-        return await runtime.run_inference(body.features, user)
+        return await runtime.run_inference(body.features, user, objective_id=body.objective_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LookupError as exc:
@@ -365,12 +421,13 @@ async def list_model_versions(
 
 @router.get("/model-versions/current", response_model=ModelVersion)
 async def current_model(
+    objective_id: str | None = None,
     runtime: MedChainRuntime = Depends(get_runtime),
     user: User = Depends(get_current_user),
 ) -> ModelVersion:
     _ = user
     try:
-        return await runtime.current_model()
+        return await runtime.current_model(objective_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

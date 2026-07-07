@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from ..models import (
     AuditEvent,
     ComplianceExport,
     DashboardSummary,
+    DigitalTwinRecord,
     Hospital,
     ModelUpdate,
     ModelVersion,
@@ -29,9 +31,12 @@ from .artifacts import ArtifactStore
 from .audit import AuditService
 from .blockchain import BlockchainService
 from .evaluation import DigitalTwin
+from .evm_blockchain import EvmBlockchainService
 from .notifications import NotificationService
 from .routing import RoutingService
 from .validation import ModelUpdateValidator
+
+logger = logging.getLogger("medchain.runtime")
 
 
 class MedChainRuntime:
@@ -49,18 +54,35 @@ class MedChainRuntime:
         self.settings = settings
         self.audit = AuditService(repo)
         self.artifacts = artifact_store or ArtifactStore(settings)
-        self.blockchain = blockchain_service or BlockchainService(settings, repo)
+        self._blockchain_injected = blockchain_service is not None
+        self.blockchain = blockchain_service or self._default_blockchain(settings, repo)
         self.notifications = notification_service or NotificationService(settings)
         self.routing = RoutingService()
-        self.twin = DigitalTwin.load(settings.digital_twin_path)
+        self.twin = DigitalTwin.load(settings.digital_twin_path)  # legacy global fallback
         self.validator = ModelUpdateValidator(settings, self.twin)
+        self._twins: dict[str, DigitalTwin | None] = {}
         self.anomaly = AnomalyDetector(settings)
         self.aggregator = FedAvgAggregator()
         self._submission_lock = asyncio.Lock()
 
+    @staticmethod
+    def _default_blockchain(settings: Settings, repo: Repository):
+        if settings.chain_backend == "evm":
+            return EvmBlockchainService(settings, repo)
+        return BlockchainService(settings, repo)
+
     async def connect(self) -> None:
         await self.artifacts.connect()
-        await self.blockchain.connect()
+        try:
+            await self.blockchain.connect()
+        except Exception as exc:  # noqa: BLE001 - EVM start must never block the app
+            if self._blockchain_injected or isinstance(self.blockchain, BlockchainService):
+                raise
+            logger.warning(
+                "EVM chain unavailable (%s); falling back to the embedded ledger", exc
+            )
+            self.blockchain = BlockchainService(self.settings, self.repo)
+            await self.blockchain.connect()
         await self.notifications.connect()
 
     async def close(self) -> None:
@@ -131,9 +153,17 @@ class MedChainRuntime:
             blockchainSigner=self.blockchain.signer_address,
         )
 
-    async def create_objective(self, objective: TrainingObjective, actor: User) -> TrainingObjective:
+    async def create_objective(
+        self,
+        objective: TrainingObjective,
+        actor: User,
+        twin_record: DigitalTwinRecord | None = None,
+    ) -> TrainingObjective:
         objective.created_by = actor.id
         saved = await self.repo.put("training_objectives", objective)
+        if twin_record is not None:
+            await self.repo.put("digital_twins", twin_record)
+            self._twins.pop(saved.id, None)  # invalidate any cached twin
         await self.audit.record("training_objective.created", "training_objective", saved.id, actor)
         return saved
 
@@ -217,7 +247,11 @@ class MedChainRuntime:
                 "submissions", Submission, round_id=training_round.id, status="verified"
             )
             expected_dimension = len(prior_verified[0].weights) if prior_verified else None
-            latest_model = await self._latest_model_version()
+            objective = await self.repo.get(
+                "training_objectives", training_round.objective_id, TrainingObjective
+            )
+            twin = await self._twin_for(objective)
+            latest_model = await self._latest_model_version(training_round.objective_id)
             report = self.validator.validate(
                 hospital,
                 training_round,
@@ -229,6 +263,7 @@ class MedChainRuntime:
                     if latest_model and latest_model.evaluated_accuracy is not None
                     else None
                 ),
+                twin=twin,
             )
             await self.repo.put("validation_reports", report)
 
@@ -319,14 +354,27 @@ class MedChainRuntime:
         await self.audit.record("round.blockchain.retried", "round", round_id, actor)
         return training_round
 
-    async def run_inference(self, features: list[float], actor: User) -> dict[str, Any]:
-        if self.twin is None:
-            raise RuntimeError("Digital twin is not configured; inference is unavailable")
-        model = await self._latest_model_version()
+    async def run_inference(
+        self,
+        features: list[float],
+        actor: User,
+        objective_id: str | None = None,
+    ) -> dict[str, Any]:
+        model = await self._latest_model_version(objective_id)
         if model is None or not model.weights:
             raise LookupError("No evaluated global model is available yet - run a training round")
+        # Resolve the objective the model belongs to (for its twin scaler + label names).
+        objective = None
+        resolved_objective_id = objective_id or model.objective_id
+        if resolved_objective_id is not None:
+            objective = await self.repo.get(
+                "training_objectives", resolved_objective_id, TrainingObjective
+            )
+        twin = await self._twin_for(objective)
+        if twin is None:
+            raise RuntimeError("Digital twin is not configured; inference is unavailable")
 
-        probability = self.twin.predict_proba(features, model.weights)
+        probability = twin.predict_proba(features, model.weights)
         confidence = max(probability, 1 - probability)
         if confidence >= 0.9:
             tier = "high"
@@ -335,6 +383,8 @@ class MedChainRuntime:
         else:
             tier = "low"
         consultation = confidence < self.settings.inference_low_confidence
+        positive = twin.positive_label or "positive"
+        negative = twin.negative_label or "negative"
 
         # Audit derived values only; clinical feature vectors never reach the log.
         await self.audit.record(
@@ -349,7 +399,7 @@ class MedChainRuntime:
             },
         )
         return {
-            "prediction": "benign" if probability >= 0.5 else "malignant",
+            "prediction": positive if probability >= 0.5 else negative,
             "probability": round(probability, 4),
             "confidence": round(confidence, 4),
             "confidence_tier": tier,
@@ -358,11 +408,11 @@ class MedChainRuntime:
             "evaluated_accuracy": model.evaluated_accuracy,
         }
 
-    async def current_model(self) -> ModelVersion:
-        versions = sorted(await self.repo.list("model_versions", ModelVersion), key=lambda item: item.round)
-        if not versions:
+    async def current_model(self, objective_id: str | None = None) -> ModelVersion:
+        latest = await self._latest_model_version(objective_id)
+        if latest is None:
             raise ValueError("No aggregated model is available")
-        return versions[-1]
+        return latest
 
     async def compliance_export(self, actor: User) -> dict[str, Any]:
         audit_events = await self.repo.list("audit_events", AuditEvent)
@@ -376,9 +426,29 @@ class MedChainRuntime:
             "audit_events": [self._dump(event) for event in audit_events],
         }
 
-    async def _latest_model_version(self) -> ModelVersion | None:
-        versions = sorted(await self.repo.list("model_versions", ModelVersion), key=lambda item: item.round)
+    async def _latest_model_version(self, objective_id: str | None = None) -> ModelVersion | None:
+        versions = await self.repo.list("model_versions", ModelVersion)
+        if objective_id is not None:
+            # A version with objective_id=None is a legacy (single-model) record; include it
+            # only when the objective itself has no schema-scoped lineage yet.
+            scoped = [v for v in versions if v.objective_id == objective_id]
+            versions = scoped if scoped else [v for v in versions if v.objective_id is None]
+        versions.sort(key=lambda item: item.round)
         return versions[-1] if versions else None
+
+    async def _twin_for(self, objective: TrainingObjective | None) -> DigitalTwin | None:
+        """Per-objective twin (from its uploaded validation set), falling back to the
+        legacy global twin for objectives created without a dataset schema."""
+        if objective is None or not objective.has_schema:
+            return self.twin
+        if objective.id not in self._twins:
+            record = await self.repo.find_one(
+                "digital_twins", DigitalTwinRecord, objective_id=objective.id
+            )
+            self._twins[objective.id] = (
+                DigitalTwin.from_objective(objective, record) if record is not None else None
+            )
+        return self._twins[objective.id]
 
     async def _demote_anomalous_submissions(
         self,
@@ -457,10 +527,14 @@ class MedChainRuntime:
         training_round.phase = f"Round {training_round.round_number} aggregating verified model updates"
         await self.repo.put("rounds", training_round)
 
+        objective = await self.repo.get(
+            "training_objectives", training_round.objective_id, TrainingObjective
+        )
+        twin = await self._twin_for(objective)
         weights, reported_accuracy = self.aggregator.aggregate(updates)
         evaluated_accuracy: float | None = None
-        if self.twin is not None:
-            twin_accuracy, _ = self.twin.evaluate(weights)
+        if twin is not None:
+            twin_accuracy, _ = twin.evaluate(weights)
             evaluated_accuracy = round(twin_accuracy * 100, 2)
         metric_source = (
             "digital_twin_evaluation" if evaluated_accuracy is not None else "weighted_client_report"
@@ -483,12 +557,16 @@ class MedChainRuntime:
         )
         await self._apply_reputation(training_round, submissions)
         existing_model = await self.repo.find_one(
-            "model_versions", ModelVersion, round=training_round.round_number
+            "model_versions",
+            ModelVersion,
+            objective_id=training_round.objective_id,
+            round=training_round.round_number,
         )
         model = existing_model or await self.repo.put(
             "model_versions",
             ModelVersion(
                 version=model_version,
+                objective_id=training_round.objective_id,
                 round=training_round.round_number,
                 accuracy=reported_accuracy,
                 evaluated_accuracy=evaluated_accuracy,

@@ -38,11 +38,37 @@ def evaluate_weights(
 class DigitalTwin:
     """Synthetic stress-test set used to sandbox model updates before merging."""
 
-    def __init__(self, features: np.ndarray, labels: np.ndarray, mean: np.ndarray, scale: np.ndarray):
+    def __init__(
+        self,
+        features: np.ndarray,
+        labels: np.ndarray,
+        mean: np.ndarray,
+        scale: np.ndarray,
+        positive_label: str | None = None,
+        negative_label: str | None = None,
+    ):
         self._features = features
         self._labels = labels
         self._mean = mean
         self._scale = scale
+        self.positive_label = positive_label
+        self.negative_label = negative_label
+
+    @classmethod
+    def from_objective(cls, objective, record) -> "DigitalTwin":
+        """Build a per-objective twin from a stored DigitalTwinRecord + the objective's scaler."""
+        features = np.asarray(record.X, dtype=np.float64)
+        labels = np.asarray(record.y, dtype=np.int64)
+        mean = np.asarray(objective.scaler_mean, dtype=np.float64)
+        scale = np.asarray(objective.scaler_scale, dtype=np.float64)
+        return cls(
+            features,
+            labels,
+            mean,
+            scale,
+            positive_label=objective.positive_label,
+            negative_label=objective.negative_label,
+        )
 
     @classmethod
     def load(cls, path: str | None) -> "DigitalTwin | None":
@@ -63,7 +89,15 @@ class DigitalTwin:
             raise RuntimeError(f"Digital twin data in {file} is malformed")
         if mean.shape[0] != features.shape[1] or scale.shape[0] != features.shape[1]:
             raise RuntimeError(f"Digital twin scaler in {file} does not match its features")
-        return cls(features, labels, mean, scale)
+        # The shipped global twin is the breast-cancer model; keep its clinical labels.
+        return cls(
+            features,
+            labels,
+            mean,
+            scale,
+            positive_label=payload.get("positive_label", "benign"),
+            negative_label=payload.get("negative_label", "malignant"),
+        )
 
     @property
     def n_features(self) -> int:

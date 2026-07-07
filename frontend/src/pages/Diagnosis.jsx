@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import ConsoleShell from "../components/ConsoleShell";
 import Icon from "../components/Icon";
 import { ApiError, apiJson } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
-const FEATURE_NAMES = [
+// Built-in breast-cancer schema (legacy objective with no uploaded validation CSV).
+const BUILTIN_FEATURES = [
   "mean radius", "mean texture", "mean perimeter", "mean area", "mean smoothness",
   "mean compactness", "mean concavity", "mean concave points", "mean symmetry",
   "mean fractal dimension", "radius error", "texture error", "perimeter error",
@@ -15,8 +16,7 @@ const FEATURE_NAMES = [
   "worst compactness", "worst concavity", "worst concave points", "worst symmetry",
   "worst fractal dimension",
 ];
-
-/* Real rows from the Wisconsin breast-cancer dataset (not used in training labels shown to the model). */
+const BUILTIN_POSITIVE = "benign";
 const SAMPLE_CASES = {
   suspicious: [11.42, 20.38, 77.58, 386.1, 0.1425, 0.2839, 0.2414, 0.1052, 0.2597, 0.0974, 0.4956, 1.156, 3.445, 27.23, 0.0091, 0.0746, 0.0566, 0.0187, 0.0596, 0.0092, 14.91, 26.5, 98.87, 567.7, 0.2098, 0.8663, 0.6869, 0.2575, 0.6638, 0.173],
   routine: [12.05, 14.63, 78.04, 449.3, 0.1031, 0.0909, 0.0659, 0.0275, 0.1675, 0.0604, 0.2636, 0.7294, 1.848, 19.87, 0.0055, 0.0143, 0.0232, 0.0057, 0.0143, 0.0024, 13.76, 20.7, 89.88, 582.6, 0.1494, 0.2156, 0.305, 0.0655, 0.2747, 0.083],
@@ -32,10 +32,48 @@ export default function Diagnosis() {
   const { user, token } = useAuth();
   const mayPredict = ["clinic_user", "platform_admin"].includes(user?.role);
 
-  const [features, setFeatures] = useState(SAMPLE_CASES.routine.map(String));
+  const [objectives, setObjectives] = useState([]);
+  const [objectiveId, setObjectiveId] = useState(""); // "" == built-in breast-cancer
+  const [schema, setSchema] = useState(null); // per-objective schema, or null for built-in
+  const [features, setFeatures] = useState(BUILTIN_FEATURES.map(() => ""));
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const featureNames = schema ? schema.feature_columns : BUILTIN_FEATURES;
+  const positiveLabel = schema ? schema.positive_label : BUILTIN_POSITIVE;
+
+  useEffect(() => {
+    if (!mayPredict || !token) return;
+    (async () => {
+      try {
+        const list = await apiJson("/training-objectives", {}, token);
+        setObjectives(list.filter((o) => o.has_schema));
+      } catch {
+        /* objectives are optional; the built-in model still works */
+      }
+    })();
+  }, [mayPredict, token]);
+
+  // Load the selected objective's schema (or reset to the built-in form).
+  useEffect(() => {
+    setResult(null);
+    setError("");
+    if (!objectiveId) {
+      setSchema(null);
+      setFeatures(BUILTIN_FEATURES.map(() => ""));
+      return;
+    }
+    (async () => {
+      try {
+        const s = await apiJson(`/training-objectives/${objectiveId}/schema`, {}, token);
+        setSchema(s);
+        setFeatures(s.feature_columns.map(() => ""));
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Could not load this objective's schema.");
+      }
+    })();
+  }, [objectiveId, token]);
 
   function loadSample(key) {
     setFeatures(SAMPLE_CASES[key].map(String));
@@ -51,16 +89,14 @@ export default function Diagnosis() {
     e.preventDefault();
     setError("");
     const parsed = features.map((v) => Number(v));
-    if (parsed.some((v) => !Number.isFinite(v))) {
+    if (parsed.length === 0 || parsed.some((v) => !Number.isFinite(v))) {
       setError("Every measurement must be a number.");
       return;
     }
     setBusy(true);
     try {
-      setResult(await apiJson("/inference/predict", {
-        method: "POST",
-        body: JSON.stringify({ features: parsed }),
-      }, token));
+      const body = objectiveId ? { features: parsed, objective_id: objectiveId } : { features: parsed };
+      setResult(await apiJson("/inference/predict", { method: "POST", body: JSON.stringify(body) }, token));
     } catch (err) {
       setResult(null);
       setError(err instanceof ApiError ? err.message : "Prediction failed. Try again.");
@@ -70,6 +106,10 @@ export default function Diagnosis() {
   }
 
   const tier = result ? TIER_COPY[result.confidence_tier] || TIER_COPY.low : null;
+  const caption = useMemo(
+    () => (schema ? `${featureNames.length} features · ${schema.target_column}` : "30 features from a fine-needle aspirate image"),
+    [schema, featureNames.length]
+  );
 
   return (
     <ConsoleShell
@@ -97,27 +137,39 @@ export default function Diagnosis() {
             <div className="panel__head">
               <div>
                 <h3>Case measurements</h3>
-                <span className="panel__caption">30 features from a fine-needle aspirate image</span>
+                <span className="panel__caption">{caption}</span>
               </div>
-              <div className="diag__samples">
-                <button type="button" className="diag__sample" onClick={() => loadSample("routine")}>
-                  <Icon name="patient" size={13} /> Routine profile
-                </button>
-                <button type="button" className="diag__sample" onClick={() => loadSample("suspicious")}>
-                  <Icon name="search" size={13} /> Suspicious profile
-                </button>
-              </div>
+              {!schema && (
+                <div className="diag__samples">
+                  <button type="button" className="diag__sample" onClick={() => loadSample("routine")}>
+                    <Icon name="patient" size={13} /> Routine profile
+                  </button>
+                  <button type="button" className="diag__sample" onClick={() => loadSample("suspicious")}>
+                    <Icon name="search" size={13} /> Suspicious profile
+                  </button>
+                </div>
+              )}
             </div>
+
+            <label className="diag__field diag__objective">
+              <span>Model</span>
+              <select value={objectiveId} onChange={(e) => setObjectiveId(e.target.value)}>
+                <option value="">Breast cancer (built-in)</option>
+                {objectives.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </label>
 
             <form onSubmit={onPredict}>
               <div className="diag__grid">
-                {FEATURE_NAMES.map((name, index) => (
+                {featureNames.map((name, index) => (
                   <label key={name} className="diag__field">
                     <span>{name}</span>
                     <input
                       type="number"
                       step="any"
-                      value={features[index]}
+                      value={features[index] ?? ""}
                       onChange={(e) => setFeature(index, e.target.value)}
                       required
                     />
@@ -154,16 +206,16 @@ export default function Diagnosis() {
             {!result ? (
               <div className="diag__placeholder">
                 <Icon name="brain" size={26} />
-                <p>Load a sample case or enter measurements, then run a prediction. The assessment comes from the model your consortium trained together.</p>
+                <p>Pick a model, enter measurements, then run a prediction. The assessment comes from the model your consortium trained together.</p>
               </div>
             ) : (
               <div className="diag__outcome">
-                <span className={`diag__verdict ${result.prediction === "malignant" ? "is-malignant" : "is-benign"}`}>
+                <span className={`diag__verdict ${result.prediction === positiveLabel ? "is-benign" : "is-malignant"}`}>
                   {result.prediction}
                 </span>
                 <div className="diag__probs">
                   <div className="diag__prob">
-                    <span>P(benign)</span>
+                    <span>P({positiveLabel})</span>
                     <div className="bar"><motion.i animate={{ width: `${result.probability * 100}%` }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} /></div>
                     <b className="tnum">{(result.probability * 100).toFixed(1)}%</b>
                   </div>
