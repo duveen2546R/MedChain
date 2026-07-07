@@ -1,56 +1,72 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import AuthScene, { authStagger, authItem } from "../components/AuthScene";
 import Icon from "../components/Icon";
-import { useAuth } from "../lib/auth";
-import { ApiError } from "../lib/api";
+import { roleLabel, useAuth } from "../lib/auth";
+import { ApiError, apiJson } from "../lib/api";
 import "./Auth.css";
-
-const accountTypes = [
-  { id: "hospital", title: "Hospital / Consortium", desc: "Train, verify, and shape the global model." },
-  { id: "clinic", title: "Clinic", desc: "Query the global model via API." },
-  { id: "research", title: "Research Partner", desc: "Read approved model and audit metadata." },
-];
 
 const STEPS = [
   {
     icon: "hospital",
-    title: "Register your organization",
-    desc: "Create an account for your hospital, clinic, or research group — it gets its own isolated organization.",
+    title: "You've been invited",
+    desc: "A MedChain administrator created an invitation for your organization and role — no self-signup needed.",
   },
   {
-    icon: "chain",
-    title: "Get registered on-chain",
-    desc: "A platform administrator records your hospital's wallet in the consortium registry with a seeded reputation.",
-  },
-  {
-    icon: "route",
-    title: "Train locally, submit weights",
-    desc: "Your data never leaves your infrastructure. Each round, you train locally and submit only the model update.",
+    icon: "lock",
+    title: "Set your password",
+    desc: "Choose a password to activate your account. Your email and role are already set by the invitation.",
   },
   {
     icon: "spark",
-    title: "Earn reputation, shape the model",
-    desc: "Verified contributions raise your on-chain reputation, and reliable nodes are routed into more rounds.",
+    title: "Start contributing",
+    desc: "Once activated you can sign in and begin working inside your organization's console.",
   },
 ];
 
 export default function Register() {
-  const { register } = useAuth();
+  const { acceptInvite } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const inviteToken = params.get("token") || "";
 
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    organization: "",
-    password: "",
-    account_type: "hospital",
-  });
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState("");
+  const [loadingPreview, setLoadingPreview] = useState(Boolean(inviteToken));
+  const [form, setForm] = useState({ name: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  useEffect(() => {
+    if (!inviteToken) {
+      setLoadingPreview(false);
+      setPreviewError("This page needs an invitation link. Ask an administrator to invite you.");
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiJson(`/auth/invitations/token/${inviteToken}`);
+        if (!cancelled) setPreview(data);
+      } catch (err) {
+        if (!cancelled) {
+          setPreviewError(
+            err instanceof ApiError && err.status === 410
+              ? "This invitation has expired or already been used."
+              : "This invitation link is invalid."
+          );
+        }
+      } finally {
+        if (!cancelled) setLoadingPreview(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -61,7 +77,7 @@ export default function Register() {
     }
     setBusy(true);
     try {
-      await register(form);
+      await acceptInvite(inviteToken, form.name, form.password);
       navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
@@ -82,10 +98,10 @@ export default function Register() {
             </Link>
           </motion.div>
           <motion.h1 className="auth__heading" variants={authItem}>
-            Join the <em>network</em>
+            Accept your <em>invitation</em>
           </motion.h1>
           <motion.p className="auth__lead" variants={authItem}>
-            Put your data to work without giving it up — contribute to, and benefit from, the shared model.
+            Activate the account an administrator created for you and join your organization on MedChain.
           </motion.p>
 
           <motion.ol className="auth__steps" variants={authItem}>
@@ -99,76 +115,59 @@ export default function Register() {
               </li>
             ))}
           </motion.ol>
-
-          <motion.p className="auth__aside" variants={authItem}>
-            <Icon name="lock" size={13} /> Raw patient data is rejected at the API boundary — the platform
-            accepts model weights and measured metrics only.
-          </motion.p>
         </motion.div>
 
         <div className="auth__side">
           <motion.div
-            className="auth__shell auth__shell--wide"
+            className="auth__shell"
             initial={{ opacity: 0, y: 30, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.9, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <div className="auth__halo" aria-hidden />
             <div className="auth__card">
-              <form className="auth__form" onSubmit={onSubmit}>
-                <div className="auth__types" role="radiogroup" aria-label="Account type">
-                  {accountTypes.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={form.account_type === t.id}
-                      className={`auth__type ${form.account_type === t.id ? "is-active" : ""}`}
-                      onClick={() => setForm((f) => ({ ...f, account_type: t.id }))}
-                    >
-                      <span className="auth__type-radio" aria-hidden />
-                      <span className="auth__type-copy">
-                        <b>{t.title}</b>
-                        <span>{t.desc}</span>
-                      </span>
-                    </button>
-                  ))}
+              {loadingPreview ? (
+                <p className="auth__lead">Checking your invitation…</p>
+              ) : previewError ? (
+                <div className="auth__form">
+                  <div className="auth__error">{previewError}</div>
+                  <Link to="/request-access" className="btn btn-primary auth__submit">
+                    Request access instead
+                  </Link>
                 </div>
+              ) : (
+                <form className="auth__form" onSubmit={onSubmit}>
+                  <div className="auth__invite-meta">
+                    <p>
+                      Joining <b>{preview.org_name}</b> as <b>{roleLabel(preview.role)}</b>
+                    </p>
+                    <p className="auth__aside">{preview.email}</p>
+                  </div>
 
-                <div className="auth__row">
                   <label className="auth__field">
                     <span>Full name</span>
                     <input value={form.name} onChange={set("name")} placeholder="Dr. Naomi Chen" required />
                   </label>
                   <label className="auth__field">
-                    <span>Organization</span>
-                    <input value={form.organization} onChange={set("organization")} placeholder="Riverside Institute" required />
+                    <span>Password</span>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={form.password}
+                      onChange={set("password")}
+                      placeholder="At least 8 characters"
+                      minLength={8}
+                      required
+                    />
                   </label>
-                </div>
 
-                <label className="auth__field">
-                  <span>Email</span>
-                  <input type="email" autoComplete="email" value={form.email} onChange={set("email")} placeholder="you@hospital.org" required />
-                </label>
-                <label className="auth__field">
-                  <span>Password</span>
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    value={form.password}
-                    onChange={set("password")}
-                    placeholder="At least 8 characters"
-                    minLength={8}
-                    required
-                  />
-                </label>
+                  {error && <div className="auth__error">{error}</div>}
 
-                {error && <div className="auth__error">{error}</div>}
-
-                <button type="submit" className="btn btn-primary auth__submit" disabled={busy}>
-                  {busy ? "Creating account…" : "Create account"}
-                </button>
-              </form>
+                  <button type="submit" className="btn btn-primary auth__submit" disabled={busy}>
+                    {busy ? "Activating…" : "Activate account"}
+                  </button>
+                </form>
+              )}
             </div>
           </motion.div>
 

@@ -11,6 +11,7 @@ from .config import Settings, settings
 from .services.runtime import MedChainRuntime
 from .services.artifacts import ArtifactStore
 from .services.blockchain import BlockchainService
+from .services.notifications import NotificationService
 from .store import Repository
 
 
@@ -19,11 +20,18 @@ def create_app(
     repository: Repository | None = None,
     artifact_store: ArtifactStore | None = None,
     blockchain_service: BlockchainService | None = None,
+    notification_service: NotificationService | None = None,
 ) -> FastAPI:
     owns_repository = repository is None
     owns_artifact_store = artifact_store is None
     repo = repository or Repository(app_settings)
-    runtime = MedChainRuntime(repo, app_settings, artifact_store, blockchain_service)
+    runtime = MedChainRuntime(
+        repo,
+        app_settings,
+        artifact_store,
+        blockchain_service,
+        notification_service,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

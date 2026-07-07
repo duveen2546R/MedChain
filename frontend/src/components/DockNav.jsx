@@ -45,7 +45,7 @@ export default function DockNav() {
   let cta;
   if (onDashboard) cta = { to: "/", label: "Back to site" };
   else if (isAuthenticated) cta = { to: "/dashboard", label: "Open Console" };
-  else cta = { to: "/register", label: "Get Started" };
+  else cta = { to: "/request-access", label: "Get Started" };
 
   return (
     <motion.nav

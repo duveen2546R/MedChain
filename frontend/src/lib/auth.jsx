@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { apiJson } from "./api";
+import { apiJson, clearTokens, getAccessToken, setTokens } from "./api";
 
-const TOKEN_KEY = "medchain_token";
 const AuthContext = createContext(null);
 
 const ROLE_LABELS = {
@@ -22,24 +21,41 @@ export function canRunRounds(role) {
   return role === "platform_admin" || role === "hospital_admin";
 }
 
+// Roles allowed to manage invitations / access requests (mirrors backend RBAC).
+export function canManageTeam(role) {
+  return role === "platform_admin" || role === "hospital_admin";
+}
+
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [token, setToken] = useState(() => getAccessToken());
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(Boolean(localStorage.getItem(TOKEN_KEY)));
+  const [loading, setLoading] = useState(Boolean(getAccessToken()));
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
-  const persistToken = useCallback((value) => {
-    tokenRef.current = value;
-    setToken(value);
-    if (value) localStorage.setItem(TOKEN_KEY, value);
-    else localStorage.removeItem(TOKEN_KEY);
+  const persistTokens = useCallback((access, refresh) => {
+    tokenRef.current = access;
+    setToken(access);
+    setTokens({ access, refresh });
   }, []);
 
   const logout = useCallback(() => {
-    persistToken(null);
+    clearTokens();
+    tokenRef.current = null;
+    setToken(null);
     setUser(null);
-  }, [persistToken]);
+  }, []);
+
+  // If a background refresh fails, api.js dispatches this so React state clears too.
+  useEffect(() => {
+    const onForcedLogout = () => {
+      tokenRef.current = null;
+      setToken(null);
+      setUser(null);
+    };
+    window.addEventListener("medchain:logout", onForcedLogout);
+    return () => window.removeEventListener("medchain:logout", onForcedLogout);
+  }, []);
 
   // Hydrate the user from an existing token on first load.
   useEffect(() => {
@@ -55,8 +71,7 @@ export function AuthProvider({ children }) {
         if (!cancelled) setUser(me);
       } catch {
         if (!cancelled) {
-          persistToken(null);
-          setUser(null);
+          logout();
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -65,7 +80,17 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [persistToken]);
+  }, [logout]);
+
+  const finishAuth = useCallback(
+    async (res) => {
+      persistTokens(res.access_token, res.refresh_token);
+      const me = await apiJson("/me", {}, res.access_token);
+      setUser(me);
+      return me;
+    },
+    [persistTokens]
+  );
 
   const login = useCallback(
     async (email, password) => {
@@ -73,31 +98,57 @@ export function AuthProvider({ children }) {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      persistToken(res.access_token);
-      const me = await apiJson("/me", {}, res.access_token);
-      setUser(me);
-      return me;
+      return finishAuth(res);
     },
-    [persistToken]
+    [finishAuth]
   );
 
-  const register = useCallback(
-    async (payload) => {
+  const acceptInvite = useCallback(
+    async (inviteToken, name, password) => {
       const res = await apiJson("/auth/register", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ token: inviteToken, name, password }),
       });
-      persistToken(res.access_token);
-      const me = await apiJson("/me", {}, res.access_token);
-      setUser(me);
-      return me;
+      return finishAuth(res);
     },
-    [persistToken]
+    [finishAuth]
+  );
+
+  const requestAccess = useCallback(
+    (payload) =>
+      apiJson("/auth/access-requests", { method: "POST", body: JSON.stringify(payload) }),
+    []
+  );
+
+  const forgotPassword = useCallback(
+    (email) =>
+      apiJson("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+    []
+  );
+
+  const resetPassword = useCallback(
+    (resetToken, password) =>
+      apiJson("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ token: resetToken, password }),
+      }),
+    []
   );
 
   const value = useMemo(
-    () => ({ token, user, loading, login, register, logout, isAuthenticated: Boolean(token && user) }),
-    [token, user, loading, login, register, logout]
+    () => ({
+      token,
+      user,
+      loading,
+      login,
+      acceptInvite,
+      requestAccess,
+      forgotPassword,
+      resetPassword,
+      logout,
+      isAuthenticated: Boolean(token && user),
+    }),
+    [token, user, loading, login, acceptInvite, requestAccess, forgotPassword, resetPassword, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

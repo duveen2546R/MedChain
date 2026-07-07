@@ -6,7 +6,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from ..config import Settings
 from ..models import Role, User
-from ..security import decode_access_token
+from ..security import decode_token
 from ..store import Repository
 
 
@@ -26,7 +26,7 @@ async def get_current_user(
     repo: Repository = request.app.state.repo
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    claims = decode_access_token(authorization.removeprefix("Bearer ").strip(), settings)
+    claims = decode_token(authorization.removeprefix("Bearer ").strip(), settings, expected_type="access")
     if not claims:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     user = await repo.get("users", claims["sub"], User)

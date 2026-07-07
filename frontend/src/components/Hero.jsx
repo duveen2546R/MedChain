@@ -34,7 +34,7 @@ export default function Hero() {
             <Link to="/dashboard" className="btn btn-primary">Open the Console</Link>
           ) : (
             <>
-              <Link to="/register" className="btn btn-primary">Get Started</Link>
+              <Link to="/request-access" className="btn btn-primary">Get Started</Link>
               <Link to="/login" className="btn btn-ghost">Sign in</Link>
             </>
           )}

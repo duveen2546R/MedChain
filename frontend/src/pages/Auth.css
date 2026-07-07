@@ -425,6 +425,25 @@
 .auth__switch a { color: var(--pink); transition: opacity .2s ease; }
 .auth__switch a:hover { opacity: 0.8; text-decoration: underline; }
 
+.auth__link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  text-align: center;
+  transition: color .2s ease;
+}
+.auth__link:hover { color: var(--pink); text-decoration: underline; }
+
+.auth__invite-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.auth__invite-meta p { margin: 0; font-size: 14.5px; color: var(--text); }
+.auth__invite-meta .auth__aside { display: flex; }
+
 /* ---------- shared loading state (ProtectedRoute) ---------- */
 .auth-loading { min-height: 100vh; display: grid; place-items: center; }
 .auth-spinner {

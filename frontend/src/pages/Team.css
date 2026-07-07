@@ -1,0 +1,137 @@
+.team {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.team__panel {
+  padding: 22px 24px;
+}
+
+.team__flash {
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  background: rgba(90, 200, 160, 0.12);
+  border: 1px solid rgba(90, 200, 160, 0.28);
+  color: #bdf3dc;
+  word-break: break-word;
+}
+.team__flash.is-error {
+  background: rgba(230, 110, 110, 0.12);
+  border-color: rgba(230, 110, 110, 0.3);
+  color: #f4c4c4;
+}
+
+.team__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.team__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.team__mid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.team__mid b {
+  font-size: 0.95rem;
+}
+.team__mid span {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.55);
+  overflow-wrap: anywhere;
+}
+
+.team__status {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.7);
+}
+.team__status--pending { color: #d9c48a; border-color: rgba(217, 196, 138, 0.35); }
+.team__status--accepted { color: #9be3c1; border-color: rgba(155, 227, 193, 0.35); }
+.team__status--expired,
+.team__status--revoked { color: rgba(255, 255, 255, 0.4); }
+
+.team__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.team__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.team__btn:hover { background: rgba(255, 255, 255, 0.09); }
+.team__btn--ok {
+  color: #0d1a14;
+  background: #7fd8ab;
+  border-color: #7fd8ab;
+}
+.team__btn--ok:hover { background: #96e2bd; }
+
+.team__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 12px;
+}
+.team__form-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.team__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 160px;
+}
+.team__field span {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+.team__field input,
+.team__field select {
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 0.9rem;
+}
+.team__field select option {
+  color: #111;
+}
+
+.team__submit {
+  align-self: flex-start;
+}

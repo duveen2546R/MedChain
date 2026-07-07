@@ -201,8 +201,8 @@ export function FinalCTA() {
           <p className="cta__lead">Improve medical AI together — with privacy, provenance, and control built in.</p>
         </Reveal>
         <Reveal delay={0.14}>
-          <Link to={isAuthenticated ? "/dashboard" : "/register"} className="btn btn-primary">
-            {isAuthenticated ? "Open the Console" : "Create your account"}
+          <Link to={isAuthenticated ? "/dashboard" : "/request-access"} className="btn btn-primary">
+            {isAuthenticated ? "Open the Console" : "Request access"}
           </Link>
         </Reveal>
       </div>

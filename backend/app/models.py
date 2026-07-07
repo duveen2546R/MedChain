@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import secrets
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 def new_id(prefix: str) -> str:
@@ -49,6 +54,44 @@ class User(APIModel):
     org_id: str
     password_hash: str
     active: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class AccessRequest(APIModel):
+    id: str = Field(default_factory=lambda: new_id("req"))
+    organization_name: str
+    organization_type: Literal["hospital", "research"]
+    contact_name: str
+    email: str
+    message: str = ""
+    status: Literal["pending", "approved", "rejected"] = "pending"
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    rejection_reason: str | None = None
+    org_id: str | None = None
+    invitation_id: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Invitation(APIModel):
+    id: str = Field(default_factory=lambda: new_id("inv"))
+    token: str = Field(default_factory=new_token)
+    email: str
+    role: Role
+    org_id: str
+    invited_by: str
+    expires_at: datetime
+    accepted_at: datetime | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class PasswordResetToken(APIModel):
+    id: str = Field(default_factory=lambda: new_id("prt"))
+    token: str = Field(default_factory=new_token)
+    user_id: str
+    expires_at: datetime
+    used_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

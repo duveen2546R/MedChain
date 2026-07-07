@@ -19,43 +19,13 @@ from ..models import (
     ValidationReport,
     new_id,
 )
-from ..security import create_access_token, hash_password, verify_password
 from ..services.runtime import MedChainRuntime
 from ..store import Repository
+from .auth_routes import auth_router
 from .dependencies import get_current_user, get_repo, require_roles
 
 router = APIRouter()
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class RegisterRequest(BaseModel):
-    name: str = Field(min_length=1)
-    email: str = Field(min_length=3)
-    password: str = Field(min_length=8)
-    organization: str = Field(min_length=1)
-    account_type: str = "clinic"
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    role: str
-    user_id: str
-    name: str | None = None
-    email: str | None = None
-
-
-# Public sign-up maps a friendly account type to a role, org type, and tier.
-# platform_admin and auditor are intentionally not self-service.
-ACCOUNT_TYPES: dict[str, tuple[str, str, str]] = {
-    "clinic": ("clinic_user", "clinic", "clinic"),
-    "hospital": ("hospital_admin", "hospital", "consortium_node"),
-    "research": ("research_partner", "research", "partner"),
-}
+router.include_router(auth_router)
 
 
 class HospitalCreate(BaseModel):
@@ -130,62 +100,6 @@ async def health(request: Request) -> dict[str, Any]:
         "blockchain_signer": request.app.state.runtime.blockchain.signer_address,
         "blockchain_height": request.app.state.runtime.blockchain.height,
     }
-
-
-@router.post("/auth/login", response_model=TokenResponse)
-async def login(body: LoginRequest, request: Request, repo: Repository = Depends(get_repo)) -> TokenResponse:
-    email = body.email.strip().lower()
-    user = await repo.find_one("users", User, email=email)
-    if not user or not verify_password(body.password, user.password_hash, request.app.state.settings):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_access_token(
-        {"sub": user.id, "role": user.role, "org_id": user.org_id},
-        request.app.state.settings,
-    )
-    return TokenResponse(access_token=token, role=user.role, user_id=user.id, name=user.name, email=user.email)
-
-
-@router.post("/auth/register", response_model=TokenResponse, status_code=201)
-async def register(body: RegisterRequest, request: Request, repo: Repository = Depends(get_repo)) -> TokenResponse:
-    settings = request.app.state.settings
-    email = body.email.strip().lower()
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise HTTPException(status_code=400, detail="Enter a valid email address")
-    if body.account_type not in ACCOUNT_TYPES:
-        raise HTTPException(status_code=400, detail="Unknown account type")
-    if await repo.find_one("users", User, email=email):
-        raise HTTPException(status_code=409, detail="An account with this email already exists")
-
-    role, org_type, tier = ACCOUNT_TYPES[body.account_type]
-    org = await repo.put(
-        "organizations",
-        Organization(name=body.organization.strip(), type=org_type, tier=tier),
-    )
-    user = await repo.put(
-        "users",
-        User(
-            email=email,
-            name=body.name.strip(),
-            role=role,
-            org_id=org.id,
-            password_hash=hash_password(body.password, settings),
-        ),
-    )
-    await request.app.state.runtime.audit.record("auth.registered", "user", user.id, user)
-    token = create_access_token(
-        {"sub": user.id, "role": user.role, "org_id": user.org_id},
-        settings,
-    )
-    return TokenResponse(access_token=token, role=user.role, user_id=user.id, name=user.name, email=user.email)
-
-
-@router.post("/auth/refresh", response_model=TokenResponse)
-async def refresh(request: Request, user: User = Depends(get_current_user)) -> TokenResponse:
-    token = create_access_token(
-        {"sub": user.id, "role": user.role, "org_id": user.org_id},
-        request.app.state.settings,
-    )
-    return TokenResponse(access_token=token, role=user.role, user_id=user.id, name=user.name, email=user.email)
 
 
 @router.get("/me")

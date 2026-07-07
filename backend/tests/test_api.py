@@ -10,7 +10,7 @@ from backend.app.main import create_app
 from backend.app.models import Hospital, Organization, TrainingObjective, User
 from backend.app.security import hash_password
 from backend.app.services.blockchain import BlockchainService
-from backend.tests.fakes import MemoryArtifactStore, MemoryRepository
+from backend.tests.fakes import CapturingNotificationService, MemoryArtifactStore, MemoryRepository
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-thirty-two-characters"
 TEST_PASSWORD = "test-password-123"
@@ -97,15 +97,21 @@ def client() -> TestClient:
     settings = Settings(secret_key=TEST_SECRET, digital_twin_path=TWIN_FIXTURE)
     repo = MemoryRepository()
     blockchain = BlockchainService(settings, repo)
+    notifications = CapturingNotificationService(settings.frontend_base_url)
     asyncio.run(seed_test_records(repo, settings, blockchain))
-    return TestClient(
+    test_client = TestClient(
         create_app(
             settings,
             repository=repo,
             artifact_store=MemoryArtifactStore(),
             blockchain_service=blockchain,
+            notification_service=notifications,
         )
     )
+    # Expose the repo + captured email to tests that need to inspect them.
+    test_client.repo = repo
+    test_client.notifications = notifications
+    return test_client
 
 
 def login(
@@ -146,36 +152,53 @@ def test_auth_and_protected_dashboard() -> None:
         assert response.json()["hospitals"]
 
 
-def test_register_creates_persistent_account() -> None:
+def test_register_via_invitation_creates_persistent_account() -> None:
     with client() as test_client:
+        admin_token = login(test_client)
+        invite = test_client.post(
+            "/auth/invitations",
+            json={
+                "email": "new.user@clinic.io",
+                "role": "clinic_user",
+                "new_org": {"name": "Downtown Clinic", "type": "clinic"},
+            },
+            headers=auth(admin_token),
+        )
+        assert invite.status_code == 201
+        token = invite.json()["invitation"]["token"]
         response = test_client.post(
             "/auth/register",
-            json={
-                "name": "New Clinic",
-                "email": "new.user@clinic.io",
-                "password": "supersecret1",
-                "organization": "Downtown Clinic",
-                "account_type": "clinic",
-            },
+            json={"token": token, "name": "New Clinic", "password": "supersecret1"},
         )
         assert response.status_code == 201
         assert response.json()["role"] == "clinic_user"
+        assert response.json()["refresh_token"]
         assert login(test_client, "new.user@clinic.io", "supersecret1")
 
 
-def test_register_rejects_duplicate_email() -> None:
+def test_register_rejects_reused_invitation() -> None:
     with client() as test_client:
-        response = test_client.post(
-            "/auth/register",
+        admin_token = login(test_client)
+        invite = test_client.post(
+            "/auth/invitations",
             json={
-                "name": "Duplicate",
-                "email": "admin@example.com",
-                "password": "supersecret1",
-                "organization": "Duplicate Org",
-                "account_type": "hospital",
+                "email": "second@clinic.io",
+                "role": "clinic_user",
+                "new_org": {"name": "Second Clinic", "type": "clinic"},
             },
+            headers=auth(admin_token),
         )
-        assert response.status_code == 409
+        token = invite.json()["invitation"]["token"]
+        first = test_client.post(
+            "/auth/register",
+            json={"token": token, "name": "First", "password": "supersecret1"},
+        )
+        assert first.status_code == 201
+        second = test_client.post(
+            "/auth/register",
+            json={"token": token, "name": "Second", "password": "supersecret1"},
+        )
+        assert second.status_code == 410
 
 
 def test_round_aggregates_only_submitted_hospital_updates() -> None:
@@ -432,14 +455,22 @@ def test_inference_predicts_from_real_global_weights() -> None:
         )
         assert forbidden.status_code == 403
 
+        invite = test_client.post(
+            "/auth/invitations",
+            json={
+                "email": "clinic@example.com",
+                "role": "clinic_user",
+                "new_org": {"name": "Downtown Clinic", "type": "clinic"},
+            },
+            headers=auth(admin_token),
+        )
+        assert invite.status_code == 201
         registered = test_client.post(
             "/auth/register",
             json={
+                "token": invite.json()["invitation"]["token"],
                 "name": "Clinic User",
-                "email": "clinic@example.com",
                 "password": "supersecret1",
-                "organization": "Downtown Clinic",
-                "account_type": "clinic",
             },
         )
         assert registered.status_code == 201

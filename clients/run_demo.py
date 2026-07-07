@@ -34,20 +34,33 @@ def api_call(method: str, api: str, path: str, token: str, expected: set[int], *
 def seed_hospital(api: str, admin_token: str, index: int, total: int, password: str) -> dict:
     email = f"hospital{index + 1}@demo.medchain"
     hospital_id = f"hsp_demo_{index + 1}"
-    registered = requests.post(
-        f"{api}/auth/register",
-        json={
-            "name": f"Demo Hospital {index + 1}",
-            "email": email,
-            "password": password,
-            "organization": f"Demo Hospital {index + 1}",
-            "account_type": "hospital",
-        },
-        timeout=30,
-    )
-    if registered.status_code not in {201, 409}:
-        sys.exit(f"Hospital account registration failed: {registered.text}")
-    token = login(api, email, password)
+    # Invite-only onboarding: the platform admin invites a hospital_admin (creating the org
+    # inline), then we accept the invitation. Idempotent: on rerun the account already exists,
+    # so login succeeds and we skip invite/register.
+    try:
+        token = login(api, email, password)
+    except requests.HTTPError:
+        invited = api_call(
+            "POST",
+            api,
+            "/auth/invitations",
+            admin_token,
+            {201},
+            json={
+                "email": email,
+                "role": "hospital_admin",
+                "new_org": {"name": f"Demo Hospital {index + 1}", "type": "hospital"},
+            },
+        )
+        invite_token = invited.json()["invitation"]["token"]
+        registered = requests.post(
+            f"{api}/auth/register",
+            json={"token": invite_token, "name": f"Demo Hospital {index + 1}", "password": password},
+            timeout=30,
+        )
+        if registered.status_code != 201:
+            sys.exit(f"Hospital account registration failed: {registered.text}")
+        token = login(api, email, password)
     org_id = api_call("GET", api, "/me", token, {200}).json()["org_id"]
 
     train_x, _, _, _ = hospital_partition(index, total)

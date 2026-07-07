@@ -7,6 +7,7 @@ const TABS = [
   { to: "/diagnosis", label: "Diagnosis", icon: "brain", roles: ["clinic_user", "platform_admin"] },
   { to: "/explorer", label: "Chain Explorer", icon: "chain", roles: ["platform_admin", "auditor", "research_partner"] },
   { to: "/audit", label: "Audit Log", icon: "shield", roles: ["platform_admin", "auditor"] },
+  { to: "/team", label: "Team", icon: "hospital", roles: ["platform_admin", "hospital_admin"] },
 ];
 
 /* Section switcher shared by every authenticated console page. */

@@ -9,7 +9,9 @@ and records every contribution and reputation change on an embedded consortium b
 
 ## Implemented features
 
-- Account registration, login, bearer authentication, and role-based authorization.
+- Invite-only, access-request onboarding with access + refresh token pairs, password reset, and
+  role-based authorization. Organizations request access; a platform admin approves and invitations
+  are sent by email (Brevo) — clinics are onboarded directly by an admin. Bearer auth throughout.
 - MongoDB-backed organizations, hospitals, objectives, rounds, submissions, model versions, and audit events.
 - Objective-based selection of active hospital participants, weighted by on-chain reputation.
 - Organization-bound model update submission with raw patient-data key rejection.

@@ -142,6 +142,7 @@ export default function Login() {
                 <button type="submit" className="btn btn-primary auth__submit" disabled={busy}>
                   {busy ? "Signing in…" : "Sign in"}
                 </button>
+                <Link to="/forgot-password" className="auth__link">Forgot password?</Link>
               </form>
             </div>
           </motion.div>
@@ -152,7 +153,7 @@ export default function Login() {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.8, delay: 0.55 }}
           >
-            New to MedChain? <Link to="/register">Create an account</Link>
+            Need access? <Link to="/request-access">Request an invitation</Link>
           </motion.p>
         </div>
       </div>

@@ -29,6 +29,7 @@ from .artifacts import ArtifactStore
 from .audit import AuditService
 from .blockchain import BlockchainService
 from .evaluation import DigitalTwin
+from .notifications import NotificationService
 from .routing import RoutingService
 from .validation import ModelUpdateValidator
 
@@ -42,12 +43,14 @@ class MedChainRuntime:
         settings: Settings,
         artifact_store: ArtifactStore | None = None,
         blockchain_service: BlockchainService | None = None,
+        notification_service: NotificationService | None = None,
     ):
         self.repo = repo
         self.settings = settings
         self.audit = AuditService(repo)
         self.artifacts = artifact_store or ArtifactStore(settings)
         self.blockchain = blockchain_service or BlockchainService(settings, repo)
+        self.notifications = notification_service or NotificationService(settings)
         self.routing = RoutingService()
         self.twin = DigitalTwin.load(settings.digital_twin_path)
         self.validator = ModelUpdateValidator(settings, self.twin)
@@ -58,8 +61,10 @@ class MedChainRuntime:
     async def connect(self) -> None:
         await self.artifacts.connect()
         await self.blockchain.connect()
+        await self.notifications.connect()
 
     async def close(self) -> None:
+        await self.notifications.close()
         await self.blockchain.close()
         await self.artifacts.close()
 

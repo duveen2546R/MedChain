@@ -53,17 +53,46 @@ def _unb64(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + padding)
 
 
-def create_access_token(payload: dict[str, Any], settings: Settings) -> str:
+def create_token(
+    payload: dict[str, Any],
+    settings: Settings,
+    *,
+    token_type: str,
+    ttl: timedelta,
+) -> str:
     claims = {
         **payload,
-        "exp": int((datetime.now(UTC) + timedelta(minutes=settings.access_token_minutes)).timestamp()),
+        "type": token_type,
+        "exp": int((datetime.now(UTC) + ttl).timestamp()),
     }
     body = _b64(json.dumps(claims, separators=(",", ":")).encode())
     sig = hmac.new(settings.secret_key.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{_b64(sig)}"
 
 
-def decode_access_token(token: str, settings: Settings) -> dict[str, Any] | None:
+def create_token_pair(payload: dict[str, Any], settings: Settings) -> tuple[str, str]:
+    """Return (access_token, refresh_token). The refresh token carries only ``sub`` so
+    that every refresh re-reads the user (role changes / deactivation take effect)."""
+    access = create_token(
+        payload,
+        settings,
+        token_type="access",
+        ttl=timedelta(minutes=settings.access_token_minutes),
+    )
+    refresh = create_token(
+        {"sub": payload["sub"]},
+        settings,
+        token_type="refresh",
+        ttl=timedelta(days=settings.refresh_token_days),
+    )
+    return access, refresh
+
+
+def decode_token(
+    token: str,
+    settings: Settings,
+    expected_type: str = "access",
+) -> dict[str, Any] | None:
     try:
         body, sig = token.split(".", 1)
     except ValueError:
@@ -73,6 +102,9 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any] | None
         return None
     claims = json.loads(_unb64(body))
     if int(claims.get("exp", 0)) < int(datetime.now(UTC).timestamp()):
+        return None
+    # Tokens minted before the type claim existed are treated as access tokens.
+    if claims.get("type", "access") != expected_type:
         return None
     return claims
 

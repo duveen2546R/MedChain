@@ -12,6 +12,10 @@ import Explorer from "./pages/Explorer";
 import Audit from "./pages/Audit";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import RequestAccess from "./pages/RequestAccess";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import Team from "./pages/Team";
 
 function ScrollManager() {
   const { pathname, hash } = useLocation();
@@ -24,7 +28,8 @@ function ScrollManager() {
 
 export default function App() {
   const { pathname } = useLocation();
-  const isAuthPage = pathname === "/login" || pathname === "/register";
+  const AUTH_PAGES = ["/login", "/register", "/request-access", "/forgot-password", "/reset-password"];
+  const isAuthPage = AUTH_PAGES.includes(pathname);
 
   return (
     <>
@@ -35,6 +40,9 @@ export default function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/request-access" element={<RequestAccess />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route
           path="/dashboard"
           element={
@@ -64,6 +72,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Audit />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/team"
+          element={
+            <ProtectedRoute>
+              <Team />
             </ProtectedRoute>
           }
         />

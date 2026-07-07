@@ -30,6 +30,44 @@ class MemoryArtifactStore:
         return f"memory://{object_name}", f"0x{digest}"
 
 
+class CapturingNotificationService:
+    """Test-only notification service; records outgoing email instead of sending."""
+
+    enabled = False
+
+    def __init__(self, frontend_base_url: str = "http://localhost:5173") -> None:
+        self.frontend_base_url = frontend_base_url
+        self.sent: list[dict[str, Any]] = []
+
+    async def connect(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    def invite_url(self, token: str) -> str:
+        return f"{self.frontend_base_url}/register?token={token}"
+
+    def reset_url(self, token: str) -> str:
+        return f"{self.frontend_base_url}/reset-password?token={token}"
+
+    async def send(self, to_email: str, to_name: str, subject: str, html: str) -> bool:
+        self.sent.append({"to": to_email, "subject": subject, "html": html})
+        return False
+
+    async def send_invitation(self, invitation: Any, org_name: str) -> bool:
+        self.sent.append({"kind": "invitation", "to": invitation.email, "token": invitation.token})
+        return False
+
+    async def send_password_reset(self, user: Any, token: str) -> bool:
+        self.sent.append({"kind": "password_reset", "to": user.email, "token": token})
+        return False
+
+    async def send_access_request_rejected(self, access_request: Any) -> bool:
+        self.sent.append({"kind": "access_request_rejected", "to": access_request.email})
+        return False
+
+
 class MemoryRepository:
     """Test-only repository; production always uses MongoDB."""
 

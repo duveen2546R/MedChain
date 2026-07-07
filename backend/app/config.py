@@ -18,6 +18,13 @@ class Settings:
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
     secret_key: str = ""
     access_token_minutes: int = 120
+    refresh_token_days: int = 14
+    invitation_expires_days: int = 7
+    reset_token_minutes: int = 60
+    brevo_api_key: str | None = None
+    mail_from_email: str | None = None
+    mail_from_name: str = "MedChain"
+    frontend_base_url: str = "http://localhost:5173"
     mongodb_uri: str | None = None
     mongodb_name: str = "medchain"
     azure_storage_connection_string: str | None = None
@@ -64,6 +71,8 @@ class Settings:
             )
         if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 12:
             raise RuntimeError("MEDCHAIN_BOOTSTRAP_ADMIN_PASSWORD must contain at least 12 characters")
+        if self.brevo_api_key and not self.mail_from_email:
+            raise RuntimeError("MEDCHAIN_MAIL_FROM_EMAIL is required when MEDCHAIN_BREVO_API_KEY is set")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,6 +85,15 @@ class Settings:
             ),
             secret_key=os.getenv("MEDCHAIN_SECRET_KEY", ""),
             access_token_minutes=int(os.getenv("MEDCHAIN_ACCESS_TOKEN_MINUTES", "120")),
+            refresh_token_days=int(os.getenv("MEDCHAIN_REFRESH_TOKEN_DAYS", str(cls.refresh_token_days))),
+            invitation_expires_days=int(
+                os.getenv("MEDCHAIN_INVITATION_EXPIRES_DAYS", str(cls.invitation_expires_days))
+            ),
+            reset_token_minutes=int(os.getenv("MEDCHAIN_RESET_TOKEN_MINUTES", str(cls.reset_token_minutes))),
+            brevo_api_key=os.getenv("MEDCHAIN_BREVO_API_KEY"),
+            mail_from_email=os.getenv("MEDCHAIN_MAIL_FROM_EMAIL"),
+            mail_from_name=os.getenv("MEDCHAIN_MAIL_FROM_NAME", cls.mail_from_name),
+            frontend_base_url=os.getenv("MEDCHAIN_FRONTEND_BASE_URL", cls.frontend_base_url),
             mongodb_uri=os.getenv("MEDCHAIN_MONGODB_URI"),
             mongodb_name=os.getenv("MEDCHAIN_MONGODB_NAME", cls.mongodb_name),
             azure_storage_connection_string=os.getenv("AZURE_STORAGE_CONNECTION_STRING"),

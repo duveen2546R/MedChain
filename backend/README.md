@@ -71,7 +71,12 @@ Remove the bootstrap password from the deployment environment after the account 
 ## API surface
 
 - `GET /health`
-- `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /me`
+- `POST /auth/login`, `POST /auth/refresh` (access + refresh token pair), `GET /me`
+- Invite-only onboarding:
+  - `POST /auth/access-requests` (public), `GET /auth/access-requests`, `POST /auth/access-requests/{id}/approve|reject` (platform_admin)
+  - `POST /auth/invitations` (platform_admin: any role/org; hospital_admin: hospital_node/clinic_user in own org), `GET /auth/invitations`, `POST /auth/invitations/{id}/revoke`
+  - `GET /auth/invitations/token/{token}` (public preview), `POST /auth/register` (accept invitation → token pair)
+  - `POST /auth/forgot-password`, `POST /auth/reset-password`
 - `GET /dashboard/summary`
 - `GET/POST/PATCH /hospitals`
 - `POST /hospitals/{id}/blockchain/register`

@@ -77,3 +77,5 @@ class Repository:
             [("round_id", 1), ("hospital_id", 1)],
             unique=True,
         )
+        await db["invitations"].create_index("token", unique=True)
+        await db["password_reset_tokens"].create_index("token", unique=True)
